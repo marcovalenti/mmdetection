@@ -11,6 +11,7 @@ import torch.distributed as dist
 from mmcv.parallel import MMDataParallel, MMDistributedDataParallel
 from mmcv.runner import get_dist_info, load_checkpoint
 
+from copy import deepcopy
 from mmdet.apis import init_dist
 from mmdet.core import coco_eval, results2json, wrap_fp16_model
 from mmdet.datasets import build_dataloader, build_dataset
@@ -25,7 +26,7 @@ def single_gpu_test(model, data_loader, show=False):
     for i, data in enumerate(data_loader):
         with torch.no_grad():
             result = model(return_loss=False, rescale=not show, **data)
-        results.append(result)
+        results.append(deepcopy(result))
 
         if show:
             model.module.show_result(data, result)
