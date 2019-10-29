@@ -174,7 +174,10 @@ def segm2json(dataset, results):
                 data['image_id'] = img_id
                 data['bbox'] = xyxy2xywh(bboxes[i])
                 data['score'] = float(bboxes[i][4])
-                data['category_id'] = dataset.cat_ids[label]
+                try:
+                    data['category_id'] = dataset.cat_ids[label]
+                except:
+                    data['category_id'] = 0
                 bbox_json_results.append(data)
 
             # segm results
@@ -190,7 +193,10 @@ def segm2json(dataset, results):
                 data['image_id'] = img_id
                 data['bbox'] = xyxy2xywh(bboxes[i])
                 data['score'] = float(mask_score[i])
-                data['category_id'] = dataset.cat_ids[label]
+                try:
+                    data['category_id'] = dataset.cat_ids[label]
+                except:
+                    data['category_id'] = 0
                 if isinstance(segms[i]['counts'], bytes):
                     segms[i]['counts'] = segms[i]['counts'].decode()
                 data['segmentation'] = segms[i]
