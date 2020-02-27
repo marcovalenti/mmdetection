@@ -208,6 +208,9 @@ class GridRCNN(TwoStageDetector):
         det_bboxes, det_labels = self.simple_test_bboxes(
             x, img_meta, proposal_list, self.test_cfg.rcnn, rescale=False)
 
+        if det_bboxes.shape[0] == 0:
+            return det_bboxes
+
         # pack rois into bboxes
         grid_rois = bbox2roi([det_bboxes[:, :4]])
         grid_feats = self.grid_roi_extractor(
