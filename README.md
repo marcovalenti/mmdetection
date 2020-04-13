@@ -1,3 +1,6 @@
+# GRoIE
+
+See [GRoIE](./configs/groie) configurations.
 
 # MMDetection
 
