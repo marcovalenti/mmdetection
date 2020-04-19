@@ -45,13 +45,15 @@ The results on COCO 2017v minival (5k images) are shown in the below table.
 
 ### Application of GRoIE to different architectures
 
-| Backbone  | Model            | Lr schd | box AP | mask AP | Config file                                                  |
-| :-------: | :--------------: | :-----: | :----: | :-----: | :----------------------------------------------------------: |
-| R-50-FPN  | Faster Original  |   1x    |  36.5  |         | [model](./faster_rcnn_r50_fpn_1x-orig.py)                    |
-| R-50-FPN  | + GRoIE          |   1x    |  37.5  |         | [model](./faster_rcnn_r50_fpn_1x-groie.py)                   |
-| R-50-FPN  | Grid R-CNN       |   1x    |  39.1  |         | [model](./grid_rcnn_gn_head_r50_fpn_1x-orig.py)              |
-| R-50-FPN  | + GRoIE          |   1x    |  39.8  |         | [model](./grid_rcnn_gn_head_r50_fpn_1x-groie.py)             |
-| R-50-FPN  | Mask R-CNN       |   1x    |  37.3  |  34.1   | [model](./mask_rcnn_r50_fpn_1x-orig.py)                      |
-| R-50-FPN  | + GRoIE          |   1x    |  38.4  |  35.8   | [model](./mask_rcnn_r50_fpn_1x-groie.py)                     |
-| R-50-FPN  | GC-Net           |   1x    |  39.5  |  35.9   | [model](./mask_rcnn_r4_gcb_c3-c5_r50_fpn_syncbn_1x-orig.py)  |
-| R-50-FPN  | + GRoIE          |   1x    |  40.3  |  37.2   | [model](./mask_rcnn_r4_gcb_c3-c5_r50_fpn_syncbn_1x-groie.py) |
+| Backbone  | Model            | Lr schd | box AP | mask AP | Config file                                                   |
+| :-------: | :--------------: | :-----: | :----: | :-----: | :-----------------------------------------------------------: |
+| R-50-FPN  | Faster Original  |   1x    |  36.5  |         | [model](./faster_rcnn_r50_fpn_1x-orig.py)                     |
+| R-50-FPN  | + GRoIE          |   1x    |  37.5  |         | [model](./faster_rcnn_r50_fpn_1x-groie.py)                    |
+| R-50-FPN  | Grid R-CNN       |   1x    |  39.1  |         | [model](./grid_rcnn_gn_head_r50_fpn_1x-orig.py)               |
+| R-50-FPN  | + GRoIE          |   1x    |  39.8  |         | [model](./grid_rcnn_gn_head_r50_fpn_1x-groie.py)              |
+| R-50-FPN  | Mask R-CNN       |   1x    |  37.3  |  34.1   | [model](./mask_rcnn_r50_fpn_1x-orig.py)                       |
+| R-50-FPN  | + GRoIE          |   1x    |  38.4  |  35.8   | [model](./mask_rcnn_r50_fpn_1x-groie.py)                      |
+| R-50-FPN  | GC-Net           |   1x    |  39.5  |  35.9   | [model](./mask_rcnn_r4_gcb_c3-c5_r50_fpn_syncbn_1x-orig.py)   |
+| R-50-FPN  | + GRoIE          |   1x    |  40.3  |  37.2   | [model](./mask_rcnn_r4_gcb_c3-c5_r50_fpn_syncbn_1x-groie.py)  |
+| R-101-FPN | GC-Net           |   1x    |  41.4  |  37.4   | [model](./mask_rcnn_r4_gcb_c3-c5_r101_fpn_syncbn_1x-orig.py)  |
+| R-101-FPN | + GRoIE          |   1x    |  42.2  |  38.5   | [model](./mask_rcnn_r4_gcb_c3-c5_r101_fpn_syncbn_1x-groie.py) |
