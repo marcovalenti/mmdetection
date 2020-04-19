@@ -1,6 +1,20 @@
 # GRoIE
 
-See [GRoIE](./configs/groie) configurations.
+See [GRoIE](./configs/groie) configurations and models.
+
+To quick test them:
+
+```
+git clone https://github.com/IMPLabUniPr/mmdetection-groie.git
+cd mmdetection-groie
+# download inside ./data/coco the COCO 2017 minival (5k images)
+pip install pytorch
+pip install -e .
+python tools/test.py configs/groie/mask_rcnn_r4_gcb_c3-c5_r101_fpn_syncbn_1x-groie.py checkpoints/mask_rcnn_r4_gcb_c3-c5_r101_fpn_syncbn_1x-groie.pth --json_out checkpoints/mask_rcnn_r4_gcb_c3-c5_r101_fpn_syncbn_1x-groie-test
+python tools/coco_eval.py checkpoints/mask_rcnn_r4_gcb_c3-c5_r101_fpn_syncbn_1x-groie-test.bbox.json --types bbox --ann data/coco/annotations/instances_val2017.json
+python tools/coco_eval.py checkpoints/mask_rcnn_r4_gcb_c3-c5_r101_fpn_syncbn_1x-groie-test.segm.json --types segm --ann data/coco/annotations/instances_val2017.json
+```
+
 
 # MMDetection
 
