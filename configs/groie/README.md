@@ -52,7 +52,7 @@ the trained models.
 | Backbone  | Model            | Lr schd | box AP | mask AP | Model                                                                       | Config file                                                         |
 | :-------: | :--------------: | :-----: | :----: | :-----: | :-------------------------------------------------------------------------: | :-----------------------------------------------------------------: |
 | R-50-FPN  | Faster Original  |   1x    |  36.5  |         | [model](https://drive.google.com/open?id=1HEt58kSrTrvgSKT_wObii1kg4NTTZLN_) | [config file](./faster_rcnn_r50_fpn_1x-orig.py)                     |
-| R-50-FPN  | + GRoIE          |   1x    |  37.5  |         |                                                                             | [config file](./faster_rcnn_r50_fpn_1x-groie.py)                    |
+| R-50-FPN  | + GRoIE          |   1x    |  37.5  |         | [model](https://drive.google.com/open?id=1wdeStvVupS9dzz5643ctimBNuSfDx2GK) | [config file](./faster_rcnn_r50_fpn_1x-groie.py)                    |
 | R-50-FPN  | Grid R-CNN       |   1x    |  39.1  |         | [model](https://drive.google.com/open?id=1JG7legc2_oomIg_1pGGPjB7JtpUcVmtz) | [config file](./grid_rcnn_gn_head_r50_fpn_1x-orig.py)               |
 | R-50-FPN  | + GRoIE          |   1x    |  39.8  |         | [model](https://drive.google.com/open?id=1aMZwFx80pAPWIPw6hfh0dHrNEOauLE6i) | [config file](./grid_rcnn_gn_head_r50_fpn_1x-groie.py)              |
 | R-50-FPN  | Mask R-CNN       |   1x    |  37.3  |  34.1   | [model](https://drive.google.com/open?id=1z5XgXOtZQpDcMKNE_87YHRQc-guCo7v7) | [config file](./mask_rcnn_r50_fpn_1x-orig.py)                       |
