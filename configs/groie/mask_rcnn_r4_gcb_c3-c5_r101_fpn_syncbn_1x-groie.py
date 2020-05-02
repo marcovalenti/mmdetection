@@ -33,11 +33,26 @@ model = dict(
             type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0),
         loss_bbox=dict(type='SmoothL1Loss', beta=1.0 / 9.0, loss_weight=1.0)),
     bbox_roi_extractor=dict(
-        type='MultipleAttentionRoIExtractorV2_3',
+        type='SumGenericRoiExtractor',
         roi_layer=dict(type='RoIAlign', out_size=7, sample_num=2),
         out_channels=256,
         featmap_strides=[4, 8, 16, 32],
-        refine_conf=dict(spatial_range=-1, num_heads=6, attention_type='0100', kv_stride=2)
+        pre_conf=dict(
+            type='ConvModule',
+            in_channels=256,
+            out_channels=256,
+            kernel_size=5,
+            padding=2,
+            inplace=False,
+        ),
+        post_conf=dict(
+            type='GeneralizedAttention',
+            in_dim=256,
+            spatial_range=-1,
+            num_heads=8,
+            attention_type='0100',
+            kv_stride=2
+        )
     ),
     bbox_head=dict(
         type='SharedFCBBoxHead',
@@ -53,11 +68,26 @@ model = dict(
             type='CrossEntropyLoss', use_sigmoid=False, loss_weight=1.0),
         loss_bbox=dict(type='SmoothL1Loss', beta=1.0, loss_weight=1.0)),
     mask_roi_extractor=dict(
-        type='MultipleAttentionRoIExtractorV2_3',
+        type='SumGenericRoiExtractor',
         roi_layer=dict(type='RoIAlign', out_size=14, sample_num=2),
         out_channels=256,
         featmap_strides=[4, 8, 16, 32],
-        refine_conf=dict(spatial_range=-1, num_heads=6, attention_type='0100', kv_stride=2)
+        pre_conf=dict(
+            type='ConvModule',
+            in_channels=256,
+            out_channels=256,
+            kernel_size=5,
+            padding=2,
+            inplace=False,
+        ),
+        post_conf=dict(
+            type='GeneralizedAttention',
+            in_dim=256,
+            spatial_range=-1,
+            num_heads=6,
+            attention_type='0100',
+            kv_stride=2
+        )
     ),
     mask_head=dict(
         type='FCNMaskHead',

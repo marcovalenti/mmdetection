@@ -60,7 +60,7 @@ the trained models.
 | R-50-FPN  | GC-Net           |   1x    |  39.5  |  35.9   | [model](https://drive.google.com/open?id=1C3rgU9960ooflBBYv4O9bOMrmkWWWvsr) | [config file](./mask_rcnn_r4_gcb_c3-c5_r50_fpn_syncbn_1x-orig.py)   |
 | R-50-FPN  | + GRoIE          |   1x    |  40.3  |  37.2   |                                                                             | [config file](./mask_rcnn_r4_gcb_c3-c5_r50_fpn_syncbn_1x-groie.py)  |
 | R-101-FPN | GC-Net           |   1x    |  41.4  |  37.4   | [model](https://drive.google.com/open?id=16aL2Nrpnntkbo5R9-wnwTd3OQ3v_HQ0x) | [config file](./mask_rcnn_r4_gcb_c3-c5_r101_fpn_syncbn_1x-orig.py)  |
-| R-101-FPN | + GRoIE          |   1x    |  42.2  |  38.5   | [model](https://drive.google.com/open?id=1XeFwFYjkZXWsMaLLZO6bC3jt31cdi4Kq) | [config file](./mask_rcnn_r4_gcb_c3-c5_r101_fpn_syncbn_1x-groie.py) |
+| R-101-FPN | + GRoIE          |   1x    |  42.2  |  38.5   |                                                                             | [config file](./mask_rcnn_r4_gcb_c3-c5_r101_fpn_syncbn_1x-groie.py) |
 
 
 
