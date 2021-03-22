@@ -5,8 +5,12 @@ from .grid_head import GridHead
 from .htc_mask_head import HTCMaskHead
 from .mask_point_head import MaskPointHead
 from .maskiou_head import MaskIoUHead
+from .fcc_maskiou_head import FCCMaskIoUHead
+from .r3_cnn_mask_head import R3MaskHead
 
 __all__ = [
     'FCNMaskHead', 'HTCMaskHead', 'FusedSemanticHead', 'GridHead',
-    'MaskIoUHead', 'CoarseMaskHead', 'MaskPointHead'
+    'MaskIoUHead', 'CoarseMaskHead', 'MaskPointHead',
+    'FCCMaskIoUHead',
+    'R3MaskHead',
 ]

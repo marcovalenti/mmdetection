@@ -1,42 +1,49 @@
+import importlib
 import torch
 import torch.nn.functional as F
 
+from mmcv.cnn import ConvModule, kaiming_init
+
+from ..builder import HEADS, build_head, build_loss
+from .htc_roi_head import HybridTaskCascadeRoIHead
 from mmdet.core import (bbox2result, bbox2roi, bbox_mapping, merge_aug_bboxes,
                         merge_aug_masks, multiclass_nms)
-from ..builder import HEADS, build_head, build_roi_extractor
-from .cascade_roi_head import CascadeRoIHead
+
+
+def max_cls(ms_scores):
+    return torch.stack(ms_scores).max(0)[0]
+
+
+def mean_cls(ms_scores):
+    return sum(ms_scores) / float(len(ms_scores))
+
+
+def load_mod(name):
+    mod = importlib.import_module('mmdet.models.roi_heads.r3_cnn_roi_head')
+    return getattr(mod, name)
 
 
 @HEADS.register_module()
-class HybridTaskCascadeRoIHead(CascadeRoIHead):
-    """Hybrid task cascade roi head including one bbox head and one mask head.
+class RecRoIHead(HybridTaskCascadeRoIHead):
 
-    https://arxiv.org/abs/1901.07518
-    """
+    """RecRoi + ms iou only on last train/test step."""
 
-    def __init__(self,
-                 num_stages,
-                 stage_loss_weights,
-                 semantic_roi_extractor=None,
-                 semantic_head=None,
-                 semantic_fusion=('bbox', 'mask'),
-                 interleaved=True,
-                 mask_info_flow=True,
-                 **kwargs):
-        super(HybridTaskCascadeRoIHead,
-              self).__init__(num_stages, stage_loss_weights, **kwargs)
-        assert self.with_bbox and self.with_mask
-        assert not self.with_shared_head  # shared head is not supported
+    def __init__(self, stages, num_stages_test=None, mask_iou_head=None,
+                 merge_cls_results=None, **kwargs):
+        super(RecRoIHead, self).__init__(**kwargs)
+        self.stages = stages
+        self.num_stages_test = num_stages_test or kwargs.get('num_stages')
+        assert self.num_stages_test > 0
+        if mask_iou_head is not None:
+            self.mask_iou_head = build_head(mask_iou_head)
+        self.merge_cls_results = mean_cls
+        if merge_cls_results is not None:
+            self.merge_cls_results = load_mod(merge_cls_results)
 
-        if semantic_head is not None:
-            if len(semantic_fusion) > 0:
-                self.semantic_roi_extractor = build_roi_extractor(
-                    semantic_roi_extractor)
-            self.semantic_head = build_head(semantic_head)
-
-        self.semantic_fusion = semantic_fusion
-        self.interleaved = interleaved
-        self.mask_info_flow = mask_info_flow
+    @property
+    def with_mask_iou(self):
+        """bool: whether the detector has Mask IoU head."""
+        return hasattr(self, 'mask_iou_head') and self.mask_iou_head is not None
 
     def init_weights(self, pretrained):
         """Initialize the weights in head.
@@ -45,180 +52,9 @@ class HybridTaskCascadeRoIHead(CascadeRoIHead):
             pretrained (str, optional): Path to pre-trained weights.
                 Defaults to None.
         """
-        super(HybridTaskCascadeRoIHead, self).init_weights(pretrained)
-        if self.with_semantic:
-            self.semantic_head.init_weights()
-
-    @property
-    def with_semantic(self):
-        """bool: whether the head has semantic head"""
-        if hasattr(self, 'semantic_head') and self.semantic_head is not None:
-            return True
-        else:
-            return False
-
-    def forward_dummy(self, x, proposals):
-        """Dummy forward function."""
-        outs = ()
-        # semantic head
-        if self.with_semantic:
-            _, semantic_feat = self.semantic_head(x)
-        else:
-            semantic_feat = None
-        # bbox heads
-        rois = bbox2roi([proposals])
-        for i in range(self.num_stages):
-            bbox_results = self._bbox_forward(
-                i, x, rois, semantic_feat=semantic_feat)
-            outs = outs + (bbox_results['cls_score'],
-                           bbox_results['bbox_pred'])
-        # mask heads
-        if self.with_mask:
-            mask_rois = rois[:100]
-            mask_roi_extractor = self.mask_roi_extractor[-1]
-            mask_feats = mask_roi_extractor(
-                x[:len(mask_roi_extractor.featmap_strides)], mask_rois)
-            if self.with_semantic and 'mask' in self.semantic_fusion:
-                mask_semantic_feat = self.semantic_roi_extractor(
-                    [semantic_feat], mask_rois)
-                mask_feats += mask_semantic_feat
-            last_feat = None
-            for i in range(self.num_stages):
-                mask_head = self.mask_head[i]
-                if self.mask_info_flow:
-                    mask_pred, last_feat = mask_head(mask_feats, last_feat)
-                else:
-                    mask_pred = mask_head(mask_feats)
-                outs = outs + (mask_pred, )
-        return outs
-
-    def _bbox_forward_train(self,
-                            stage,
-                            x,
-                            sampling_results,
-                            gt_bboxes,
-                            gt_labels,
-                            rcnn_train_cfg,
-                            semantic_feat=None):
-        """Run forward function and calculate loss for box head in training."""
-        bbox_head = self.bbox_head[stage]
-        rois = bbox2roi([res.bboxes for res in sampling_results])
-        bbox_results = self._bbox_forward(
-            stage, x, rois, semantic_feat=semantic_feat)
-
-        bbox_targets = bbox_head.get_targets(sampling_results, gt_bboxes,
-                                             gt_labels, rcnn_train_cfg)
-        loss_bbox = bbox_head.loss(bbox_results['cls_score'],
-                                   bbox_results['bbox_pred'], rois,
-                                   *bbox_targets)
-
-        bbox_results.update(
-            loss_bbox=loss_bbox,
-            rois=rois,
-            bbox_targets=bbox_targets,
-        )
-        return bbox_results
-
-    def _mask_forward_train(self,
-                            stage,
-                            x,
-                            sampling_results,
-                            gt_masks,
-                            rcnn_train_cfg,
-                            semantic_feat=None,
-                            ret_intermediate_results=False):
-        """Run forward function and calculate loss for mask head in
-        training."""
-        mask_roi_extractor = self.mask_roi_extractor[stage]
-        mask_head = self.mask_head[stage]
-        pos_rois = bbox2roi([res.pos_bboxes for res in sampling_results])
-        mask_feats = mask_roi_extractor(x[:mask_roi_extractor.num_inputs],
-                                        pos_rois)
-
-        # semantic feature fusion
-        # element-wise sum for original features and pooled semantic features
-        if self.with_semantic and 'mask' in self.semantic_fusion:
-            mask_semantic_feat = self.semantic_roi_extractor([semantic_feat],
-                                                             pos_rois)
-            if mask_semantic_feat.shape[-2:] != mask_feats.shape[-2:]:
-                mask_semantic_feat = F.adaptive_avg_pool2d(
-                    mask_semantic_feat, mask_feats.shape[-2:])
-            mask_feats += mask_semantic_feat
-
-        # mask information flow
-        # forward all previous mask heads to obtain last_feat, and fuse it
-        # with the normal mask feature
-        if self.mask_info_flow:
-            last_feat = None
-            for i in range(stage):
-                last_feat = self.mask_head[i](
-                    mask_feats, last_feat, return_logits=False)
-            mask_pred = mask_head(mask_feats, last_feat, return_feat=False)
-        else:
-            mask_pred = mask_head(mask_feats, return_feat=False)
-
-        mask_targets = mask_head.get_targets(sampling_results, gt_masks,
-                                             rcnn_train_cfg)
-        pos_labels = torch.cat([res.pos_gt_labels for res in sampling_results])
-        loss_mask = mask_head.loss(mask_pred, mask_targets, pos_labels)
-
-        mask_results = dict(loss_mask=loss_mask)
-
-        if ret_intermediate_results:
-            mask_results.update(dict(
-                loss_mask=loss_mask,
-                mask_pred=mask_pred,
-                mask_feats=mask_feats,
-                mask_targets=mask_targets))
-
-        return mask_results
-
-    def _bbox_forward(self, stage, x, rois, semantic_feat=None):
-        """Box head forward function used in both training and testing."""
-        bbox_roi_extractor = self.bbox_roi_extractor[stage]
-        bbox_head = self.bbox_head[stage]
-        bbox_feats = bbox_roi_extractor(
-            x[:len(bbox_roi_extractor.featmap_strides)], rois)
-        if self.with_semantic and 'bbox' in self.semantic_fusion:
-            bbox_semantic_feat = self.semantic_roi_extractor([semantic_feat],
-                                                             rois)
-            if bbox_semantic_feat.shape[-2:] != bbox_feats.shape[-2:]:
-                bbox_semantic_feat = F.adaptive_avg_pool2d(
-                    bbox_semantic_feat, bbox_feats.shape[-2:])
-            bbox_feats += bbox_semantic_feat
-        cls_score, bbox_pred = bbox_head(bbox_feats)
-
-        bbox_results = dict(cls_score=cls_score, bbox_pred=bbox_pred)
-        return bbox_results
-
-    def _mask_forward_test(self, stage, x, bboxes, semantic_feat=None):
-        """Mask head forward function for testing."""
-        mask_roi_extractor = self.mask_roi_extractor[stage]
-        mask_head = self.mask_head[stage]
-        mask_rois = bbox2roi([bboxes])
-        mask_feats = mask_roi_extractor(
-            x[:len(mask_roi_extractor.featmap_strides)], mask_rois)
-        if self.with_semantic and 'mask' in self.semantic_fusion:
-            mask_semantic_feat = self.semantic_roi_extractor([semantic_feat],
-                                                             mask_rois)
-            if mask_semantic_feat.shape[-2:] != mask_feats.shape[-2:]:
-                mask_semantic_feat = F.adaptive_avg_pool2d(
-                    mask_semantic_feat, mask_feats.shape[-2:])
-            mask_feats += mask_semantic_feat
-        if self.mask_info_flow:
-            last_feat = None
-            last_pred = None
-            for i in range(stage):
-                mask_pred, last_feat = self.mask_head[i](mask_feats, last_feat)
-                if last_pred is not None:
-                    mask_pred = mask_pred + last_pred
-                last_pred = mask_pred
-            mask_pred = mask_head(mask_feats, last_feat, return_feat=False)
-            if last_pred is not None:
-                mask_pred = mask_pred + last_pred
-        else:
-            mask_pred = mask_head(mask_feats)
-        return mask_pred
+        super(RecRoIHead, self).init_weights(pretrained)
+        if self.with_mask_iou:
+            self.mask_iou_head.init_weights()
 
     def forward_train(self,
                       x,
@@ -262,8 +98,9 @@ class HybridTaskCascadeRoIHead(CascadeRoIHead):
         # 2 outputs: segmentation prediction and embedded features
         losses = dict()
         if self.with_semantic:
+            # use semantic output obtained from gt masks
             semantic_pred, semantic_feat = self.semantic_head(x)
-            loss_seg = self.semantic_head.loss(semantic_pred, gt_semantic_seg)
+            loss_seg = self.semantic_head.loss(x, semantic_pred, gt_masks)
             losses['loss_semantic_seg'] = loss_seg
         else:
             semantic_feat = None
@@ -294,10 +131,13 @@ class HybridTaskCascadeRoIHead(CascadeRoIHead):
                     feats=[lvl_feat[j][None] for lvl_feat in x])
                 sampling_results.append(sampling_result)
 
+            # get next bbox/mask index from the list
+            idx = self.stages[i]
+
             # bbox head forward and loss
             bbox_results = \
                 self._bbox_forward_train(
-                    i, x, sampling_results, gt_bboxes, gt_labels,
+                    idx, x, sampling_results, gt_bboxes, gt_labels,
                     rcnn_train_cfg, semantic_feat)
             roi_labels = bbox_results['bbox_targets'][0]
 
@@ -312,7 +152,7 @@ class HybridTaskCascadeRoIHead(CascadeRoIHead):
                 if self.interleaved:
                     pos_is_gts = [res.pos_is_gt for res in sampling_results]
                     with torch.no_grad():
-                        proposal_list = self.bbox_head[i].refine_bboxes(
+                        proposal_list = self.bbox_head[idx].refine_bboxes(
                             bbox_results['rois'], roi_labels,
                             bbox_results['bbox_pred'], pos_is_gts, img_metas)
                         # re-assign and sample 512 RoIs from 512 RoIs
@@ -329,8 +169,8 @@ class HybridTaskCascadeRoIHead(CascadeRoIHead):
                                 feats=[lvl_feat[j][None] for lvl_feat in x])
                             sampling_results.append(sampling_result)
                 mask_results = self._mask_forward_train(
-                    i, x, sampling_results, gt_masks, rcnn_train_cfg,
-                    semantic_feat)
+                    idx, x, sampling_results, gt_masks, rcnn_train_cfg,
+                    semantic_feat, ret_intermediate_results=True)
                 for name, value in mask_results['loss_mask'].items():
                     losses[f's{i}.{name}'] = (
                         value * lw if 'loss' in name else value)
@@ -339,9 +179,27 @@ class HybridTaskCascadeRoIHead(CascadeRoIHead):
             if i < self.num_stages - 1 and not self.interleaved:
                 pos_is_gts = [res.pos_is_gt for res in sampling_results]
                 with torch.no_grad():
-                    proposal_list = self.bbox_head[i].refine_bboxes(
+                    proposal_list = self.bbox_head[idx].refine_bboxes(
                         bbox_results['rois'], roi_labels,
                         bbox_results['bbox_pred'], pos_is_gts, img_metas)
+
+            # mask iou head forward and loss
+            if i == self.num_stages - 1 and self.with_mask_iou:
+                pos_labels = torch.cat([
+                    res.pos_gt_labels for res in sampling_results])
+                pos_mask_pred = mask_results['mask_pred'][
+                    range(mask_results['mask_pred'].size(0)), pos_labels]
+                mask_iou_pred = self.mask_iou_head(mask_results['mask_feats'],
+                                                   pos_mask_pred)
+                pos_mask_iou_pred = mask_iou_pred[range(mask_iou_pred.size(0)),
+                                                  pos_labels]
+
+                mask_iou_targets = self.mask_iou_head.get_targets(
+                    sampling_results, gt_masks, pos_mask_pred,
+                    mask_results['mask_targets'], self.train_cfg[i])
+                loss_mask_iou = self.mask_iou_head.loss(pos_mask_iou_pred,
+                                                        mask_iou_targets)
+                losses.update(loss_mask_iou)
 
         return losses
 
@@ -363,19 +221,22 @@ class HybridTaskCascadeRoIHead(CascadeRoIHead):
         rcnn_test_cfg = self.test_cfg
 
         rois = bbox2roi(proposal_list)
-        for i in range(self.num_stages):
-            bbox_head = self.bbox_head[i]
+        for i in range(self.num_stages_test):
+            # get bbox/mask index
+            idx = self.stages[i]
+
+            bbox_head = self.bbox_head[idx]
             bbox_results = self._bbox_forward(
-                i, x, rois, semantic_feat=semantic_feat)
+                idx, x, rois, semantic_feat=semantic_feat)
             ms_scores.append(bbox_results['cls_score'])
 
-            if i < self.num_stages - 1:
+            if i < self.num_stages_test - 1:
                 bbox_label = bbox_results['cls_score'].argmax(dim=1)
                 rois = bbox_head.regress_by_class(rois, bbox_label,
                                                   bbox_results['bbox_pred'],
                                                   img_metas[0])
 
-        cls_score = sum(ms_scores) / float(len(ms_scores))
+        cls_score = self.merge_cls_results(ms_scores)
         det_bboxes, det_labels = self.bbox_head[-1].get_bboxes(
             rois,
             cls_score,
@@ -389,9 +250,16 @@ class HybridTaskCascadeRoIHead(CascadeRoIHead):
         ms_bbox_result['ensemble'] = bbox_result
 
         if self.with_mask:
+            # init mask iou score
+            mask_scores = None
+
             if det_bboxes.shape[0] == 0:
                 mask_classes = self.mask_head[-1].num_classes
                 segm_result = [[] for _ in range(mask_classes)]
+
+                # mask iou branch
+                if self.with_mask_iou:
+                    mask_scores = [[] for _ in range(mask_classes)]
             else:
                 _bboxes = (
                     det_bboxes[:, :4] * det_bboxes.new_tensor(scale_factor)
@@ -407,23 +275,42 @@ class HybridTaskCascadeRoIHead(CascadeRoIHead):
                         [semantic_feat], mask_rois)
                     mask_feats += mask_semantic_feat
                 last_feat = None
-                for i in range(self.num_stages):
-                    mask_head = self.mask_head[i]
+                for i in range(self.num_stages_test):
+                    idx = self.stages[i]
+                    mask_head = self.mask_head[idx]
                     if self.mask_info_flow:
                         mask_pred, last_feat = mask_head(mask_feats, last_feat)
                     else:
                         mask_pred = mask_head(mask_feats)
                     aug_masks.append(mask_pred.sigmoid().cpu().numpy())
-                merged_masks = merge_aug_masks(aug_masks,
-                                               [img_metas] * self.num_stages,
-                                               self.test_cfg)
+                merged_masks = merge_aug_masks(
+                        aug_masks,
+                        [img_metas] * self.num_stages_test,
+                        self.test_cfg)
                 segm_result = self.mask_head[-1].get_seg_masks(
                     merged_masks, _bboxes, det_labels, rcnn_test_cfg,
                     ori_shape, scale_factor, rescale)
-            ms_segm_result['ensemble'] = segm_result
+
+                # mask iou branch
+                if self.with_mask_iou:
+                    # mask iou score
+                    mask_iou_pred = self.mask_iou_head(
+                        mask_feats,
+                        mask_pred[range(det_labels.size(0)),
+                                  det_labels])
+                    mask_scores = self.mask_iou_head.get_mask_scores(
+                        mask_iou_pred, det_bboxes, det_labels)
+
+            # update ensemble in case of mask iou scores
+            if mask_scores is not None:
+                ms_segm_result['ensemble'] = (segm_result, mask_scores)
+            else:
+                ms_segm_result['ensemble'] = segm_result
 
         if self.with_mask:
-            results = (ms_bbox_result['ensemble'], ms_segm_result['ensemble'])
+            results = (
+                ms_bbox_result['ensemble'], ms_segm_result['ensemble']
+            )
         else:
             results = ms_bbox_result['ensemble']
 
@@ -458,19 +345,22 @@ class HybridTaskCascadeRoIHead(CascadeRoIHead):
             ms_scores = []
 
             rois = bbox2roi([proposals])
-            for i in range(self.num_stages):
-                bbox_head = self.bbox_head[i]
+            for i in range(self.num_stages_test):
+                # get bbox/mask head idx
+                idx = self.stages[i]
+
+                bbox_head = self.bbox_head[idx]
                 bbox_results = self._bbox_forward(
-                    i, x, rois, semantic_feat=semantic)
+                    idx, x, rois, semantic_feat=semantic)
                 ms_scores.append(bbox_results['cls_score'])
 
-                if i < self.num_stages - 1:
+                if i < self.num_stages_test - 1:
                     bbox_label = bbox_results['cls_score'].argmax(dim=1)
                     rois = bbox_head.regress_by_class(
                         rois, bbox_label, bbox_results['bbox_pred'],
                         img_meta[0])
 
-            cls_score = sum(ms_scores) / float(len(ms_scores))
+            cls_score = self.merge_cls_results(ms_scores)
             bboxes, scores = self.bbox_head[-1].get_bboxes(
                 rois,
                 cls_score,
@@ -494,10 +384,16 @@ class HybridTaskCascadeRoIHead(CascadeRoIHead):
                                   self.bbox_head[-1].num_classes)
 
         if self.with_mask:
+            # int mask iou score
+            mask_scores = None
+
             if det_bboxes.shape[0] == 0:
                 segm_result = [[]
                                for _ in range(self.mask_head[-1].num_classes -
                                               1)]
+                # mask iou branch
+                if self.with_mask_iou:
+                    mask_scores = [[] for _ in range(mask_classes)]
             else:
                 aug_masks = []
                 aug_img_metas = []
@@ -523,8 +419,9 @@ class HybridTaskCascadeRoIHead(CascadeRoIHead):
                                 mask_semantic_feat, mask_feats.shape[-2:])
                         mask_feats += mask_semantic_feat
                     last_feat = None
-                    for i in range(self.num_stages):
-                        mask_head = self.mask_head[i]
+                    for i in range(self.num_stages_test):
+                        idx = self.stages[i]
+                        mask_head = self.mask_head[idx]
                         if self.mask_info_flow:
                             mask_pred, last_feat = mask_head(
                                 mask_feats, last_feat)
@@ -544,6 +441,23 @@ class HybridTaskCascadeRoIHead(CascadeRoIHead):
                     ori_shape,
                     scale_factor=1.0,
                     rescale=False)
-            return bbox_result, segm_result
+
+                # mask iou branch
+                if self.with_mask_iou:
+                    # mask iou score
+                    mask_iou_pred = self.mask_iou_head(
+                        mask_feats,
+                        mask_pred[range(det_labels.size(0)),
+                                  det_labels])
+                    mask_scores = self.mask_iou_head.get_mask_scores(
+                        mask_iou_pred, det_bboxes, det_labels)
+
+            # update ensemble in case of mask iou scores
+            if mask_scores is not None:
+                return bbox_result, (segm_result, mask_scores)
+            else:
+                return bbox_result, segm_result
+
+            return bbox_result, (segm_result, mask_scores)
         else:
             return bbox_result

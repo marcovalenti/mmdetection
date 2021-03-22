@@ -7,6 +7,7 @@ import time
 import mmcv
 import torch
 import torch.distributed as dist
+from copy import deepcopy
 from mmcv.runner import get_dist_info
 
 from mmdet.core import encode_mask_results, tensor2imgs
@@ -55,7 +56,7 @@ def single_gpu_test(model,
             bbox_results, mask_results = result
             encoded_mask_results = encode_mask_results(mask_results)
             result = bbox_results, encoded_mask_results
-        results.append(result)
+        results.append(deepcopy(result))
 
         batch_size = len(data['img_metas'][0].data)
         for _ in range(batch_size):
@@ -97,7 +98,7 @@ def multi_gpu_test(model, data_loader, tmpdir=None, gpu_collect=False):
                 bbox_results, mask_results = result
                 encoded_mask_results = encode_mask_results(mask_results)
                 result = bbox_results, encoded_mask_results
-        results.append(result)
+        results.append(deepcopy(result))
 
         if rank == 0:
             batch_size = (

@@ -2,6 +2,7 @@ import torch
 
 from ..builder import BBOX_ASSIGNERS
 from ..iou_calculators import build_iou_calculator
+from ...utils.iou import count_per_iou_range
 from .assign_result import AssignResult
 from .base_assigner import BaseAssigner
 
@@ -46,7 +47,8 @@ class MaxIoUAssigner(BaseAssigner):
                  ignore_wrt_candidates=True,
                  match_low_quality=True,
                  gpu_assign_thr=-1,
-                 iou_calculator=dict(type='BboxOverlaps2D')):
+                 iou_calculator=dict(type='BboxOverlaps2D'),
+                 debug_iou=False):
         self.pos_iou_thr = pos_iou_thr
         self.neg_iou_thr = neg_iou_thr
         self.min_pos_iou = min_pos_iou
@@ -56,6 +58,7 @@ class MaxIoUAssigner(BaseAssigner):
         self.gpu_assign_thr = gpu_assign_thr
         self.match_low_quality = match_low_quality
         self.iou_calculator = build_iou_calculator(iou_calculator)
+        self.debug_iou = debug_iou
 
     def assign(self, bboxes, gt_bboxes, gt_bboxes_ignore=None, gt_labels=None):
         """Assign gt to bboxes.
@@ -163,6 +166,13 @@ class MaxIoUAssigner(BaseAssigner):
         # for each anchor, which gt best overlaps with it
         # for each anchor, the max iou of all gts
         max_overlaps, argmax_overlaps = overlaps.max(dim=0)
+
+        if self.debug_iou is not False:
+            print("iou_histogram stage[{0}] {1}".format(
+                self.debug_iou['stage'],
+                list(count_per_iou_range()(max_overlaps).values)
+            ))
+
         # for each gt, which anchor best overlaps with it
         # for each gt, the max iou of all proposals
         gt_max_overlaps, gt_argmax_overlaps = overlaps.max(dim=1)
