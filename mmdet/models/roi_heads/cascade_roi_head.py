@@ -50,13 +50,13 @@ class CascadeRoIHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
         """
         self.bbox_roi_extractor = nn.ModuleList()
         self.bbox_head = nn.ModuleList()
+        count = len(bbox_head)
         if not isinstance(bbox_roi_extractor, list):
             bbox_roi_extractor = [
-                bbox_roi_extractor for _ in range(self.num_stages)
+                bbox_roi_extractor for _ in range(count)
             ]
         if not isinstance(bbox_head, list):
-            bbox_head = [bbox_head for _ in range(self.num_stages)]
-        assert len(bbox_roi_extractor) == len(bbox_head) == self.num_stages
+            bbox_head = [bbox_head for _ in range(count)]
         for roi_extractor, head in zip(bbox_roi_extractor, bbox_head):
             self.bbox_roi_extractor.append(build_roi_extractor(roi_extractor))
             self.bbox_head.append(build_head(head))
@@ -69,9 +69,9 @@ class CascadeRoIHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
             mask_head (dict): Config of mask in mask head.
         """
         self.mask_head = nn.ModuleList()
+        count = len(mask_head)
         if not isinstance(mask_head, list):
-            mask_head = [mask_head for _ in range(self.num_stages)]
-        assert len(mask_head) == self.num_stages
+            mask_head = [mask_head for _ in range(count)]
         for head in mask_head:
             self.mask_head.append(build_head(head))
         if mask_roi_extractor is not None:
@@ -79,9 +79,8 @@ class CascadeRoIHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
             self.mask_roi_extractor = nn.ModuleList()
             if not isinstance(mask_roi_extractor, list):
                 mask_roi_extractor = [
-                    mask_roi_extractor for _ in range(self.num_stages)
+                    mask_roi_extractor for _ in range(count)
                 ]
-            assert len(mask_roi_extractor) == self.num_stages
             for roi_extractor in mask_roi_extractor:
                 self.mask_roi_extractor.append(
                     build_roi_extractor(roi_extractor))
@@ -110,11 +109,12 @@ class CascadeRoIHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
         """
         if self.with_shared_head:
             self.shared_head.init_weights(pretrained=pretrained)
-        for i in range(self.num_stages):
-            if self.with_bbox:
+        if self.with_bbox:
+            for i in range(len(self.bbox_head)):
                 self.bbox_roi_extractor[i].init_weights()
                 self.bbox_head[i].init_weights()
-            if self.with_mask:
+        if self.with_mask:
+            for i in range(len(self.mask_head)):
                 if not self.share_roi_extractor:
                     self.mask_roi_extractor[i].init_weights()
                 self.mask_head[i].init_weights()
