@@ -9,19 +9,15 @@ from .mask_point_head import MaskPointHead
 from .maskiou_head import MaskIoUHead
 from .scnet_mask_head import SCNetMaskHead
 from .scnet_semantic_head import SCNetSemanticHead
-from .fcn_att_mask_head import FCNAttMaskHead
 from .fcc_maskiou_head import FCCMaskIoUHead
 from .fcc2_maskiou_head import FCC2MaskIoUHead
 from .r3_cnn_mask_head import R3MaskHead
-from .cfcn_mask_head import CFCNMaskHead
 
 __all__ = [
     'FCNMaskHead', 'HTCMaskHead', 'FusedSemanticHead', 'GridHead',
     'MaskIoUHead', 'CoarseMaskHead', 'MaskPointHead', 'SCNetMaskHead',
     'SCNetSemanticHead', 'GlobalContextHead', 'FeatureRelayHead',
-    'FCNAttMaskHead',
     'FCCMaskIoUHead',
     'R3MaskHead',
-    'CFCNMaskHead',
-    'FCC2MaskIoUHead',
+    'FCC2MaskIoUHead'
 ]
