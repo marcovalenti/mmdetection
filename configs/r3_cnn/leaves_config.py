@@ -1,21 +1,3 @@
-# _base_ = [
-#     '../_base_/models/mask_rcnn_r50_fpn.py',
-#     '../_base_/datasets/leaves_instance.py',
-#     '../_base_/schedules/schedule_1x.py', '../_base_/default_runtime.py'
-# ]
-
-# model = dict( 
-#     roi_head=dict(
-#         bbox_head=dict(
-#             # num_classes=16
-#             num_classes=2
-#         ),
-#         mask_head=dict(
-#             # num_classes=2
-#             num_classes=2
-#         )
-#     )
-# )
 _base_ = [
     '../htc/htc_without_semantic_r50_fpn_1x_coco_leaves.py'
 ]
@@ -40,7 +22,6 @@ model = dict(
                 fc_out_channels=1024,
                 roi_feat_size=7,
                 num_classes=16,
-                #num_classes=11,
                 bbox_coder=dict(
                     type='DeltaXYWHBBoxCoder',
                     target_means=[0.0, 0.0, 0.0, 0.0],
@@ -66,7 +47,8 @@ model = dict(
                 in_channels=256,
                 conv_out_channels=256,
                 num_classes=16,
-                #num_classes=11,
                 loss_mask=dict(
                     type='CrossEntropyLoss', use_mask=True, loss_weight=1.0))
         ]))
+
+optimizer = dict (type = 'SGD', lr = 0.0025, momentum = 0.9, weight_decay = 0.0001)
