@@ -15,8 +15,8 @@ from .coco import CocoDataset
 
 @DATASETS.register_module()
 class LeavesDataset(CocoDataset):
-    CLASSES = ( 'black_rot_grappolo', 'grappolo_vite', 'foglia_vite' ,
-		 'botrite_foglia', 'black_rot_foglia', 'virosi_pinot_grigio', 'red_blotch_foglia',
-		 'malattia_esca', 'oidio_tralci', 'carie_bianca_grappolo', 'peronospora_grappolo',
-		 'peronospora_foglia', 'oidio_grappolo', 'oidio_foglia', 'botrite_grappolo',
-		 'accartocciamento_fogliare')
+    CLASSES = ( 'oidio_grappolo', 'grappolo_vite', 'black_rot_foglia' ,
+		 'foglia_vite', 'oidio_foglia', 'peronospora_foglia', 'oidio_tralci',
+		 'botrite_grappolo', 'accartocciamento_fogliare', 'botrite_foglia',
+		 'black_rot_grappolo', 'virosi_pinot_grigio', 'red_blotch_foglia', 'malattia_esca',
+		 'carie_bianca_grappolo', 'peronospora_grappolo')
