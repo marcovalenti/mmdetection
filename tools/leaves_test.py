@@ -169,41 +169,131 @@ def get_test_masks(dataset, outputs, reference_labels, show_thr=0.3):
     rispetto alla superclasse di riferimento
     '''
     classes = dataset.CLASSES
-    masks_result = {}
-    class_result = []
+    class_result = {}
     result = []
     
     for id_img in range(len(outputs)):
         #outputs[id_img][0] -> bbox
         #outputs[id_img][0] -> segm
         for id_classe in range(len(outputs[id_img][1])):
-            import ipdb; ipdb.set_trace()
+            
             if len(outputs[id_img][1][id_classe]) > 0:
                 #considero le classi che hanno una segmentazione
                 h, w = outputs[id_img][1][id_classe][0]['size']
                 res_mask = np.array([0] * h * w, dtype = 'uint8')
                 res_mask = res_mask.reshape((h, w))
+                empty_mask = res_mask.copy()
                 
                 for id_segm in range(len(outputs[id_img][1][id_classe])):
-                    #decodifico la maschera e ci faccio l'or con la maschera
-                    #finale della classe
-                    temp = res_mask.copy()
-                    bin_mask = outputs[id_img][1][id_classe][id_segm]	#TODO considerare anche la soglia
-                    res_mask = np.bitwise_or(temp, mask_util.decode(bin_mask))
+                    #considero solo le segmentazioni sopra soglia
+                    net_confidence = outputs[id_img][0][id_classe][id_segm][4]
                     
-                masks_result[id_classe] = res_mask
-        
-                
-            else:
-                masks_result[id_classe] = 0
-                
-            class_result.append(masks_result)
-            mask_result = {}
+                    if net_confidence < show_thr:
+                        res_mask = np.bitwise_or(res_mask, empty_mask)
+                    else:
+                        #decodifico la maschera e ci faccio l'or con la maschera
+                        #finale della classe
+                        temp = res_mask.copy()
+                        bin_mask = outputs[id_img][1][id_classe][id_segm]
+                        res_mask = np.bitwise_or(temp, mask_util.decode(bin_mask))
+                    
+                class_result[id_classe] = res_mask
                 
         result.append(class_result)
-        class_result = []
-    
+        class_result = {}
+
+        for key in result[id_img].keys():
+            #sostituisco alle mappe binarie la loro area occupata
+            tmp = np.copy(result[id_img][key])
+            result[id_img][key] = np.sum(tmp)
+        
+        for key in result[id_img].keys():
+            area_temp = result[id_img][key].copy()
+            
+            if 'grappolo' in classes[key] and classes[key] != 'grappolo_vite' and reference_labels['grappolo_vite'] in result[id_img].keys():
+                if result[id_img][reference_labels['grappolo_vite']] > 0:
+                    result[id_img][key] = (area_temp / result[id_img][reference_labels['grappolo_vite']])
+                else:
+                    result[id_img][key] = 0.0
+                
+            elif 'grappolo' in classes[key] and classes[key] != 'grappolo_vite' and reference_labels['grappolo_vite'] not in result[id_img].keys():
+                #NOTE: se esiste la malattia ma non la classe base, metto a 0 la percentuale di malattia
+                result[id_img][key] = 0.0
+            
+            elif 'foglia' in classes[key] and classes[key] != 'foglia_vite' and reference_labels['foglia_vite'] in result[id_img].keys():
+                if result[id_img][reference_labels['foglia_vite']] > 0:
+                    result[id_img][key] = (area_temp / result[id_img][reference_labels['foglia_vite']])
+                else:
+                    result[id_img][key] = 0.0
+                
+            elif 'foglia' in classes[key] and classes[key] != 'foglia_vite' and reference_labels['foglia_vite'] not in result[id_img].keys():
+                #NOTE: se esiste la malattia ma non la classe base, metto a 0 la percentuale di malattia
+                result[id_img][key] = 0.0
+                
+            elif classes[key] == 'virosi_pinot_grigio' or classes[key] == 'malattia_esca' and reference_labels['foglia_vite'] in result[id_img].keys():
+                if result[id_img][reference_labels['foglia_vite']] > 0:
+                    result[id_img][key] = (area_temp / result[id_img][reference_labels['foglia_vite']])
+                else:
+                    result[id_img][key] = 0.0
+                
+            elif classes[key] == 'virosi_pinot_grigio' or classes[key] == 'malattia_esca' and reference_labels['foglia_vite'] not in result[id_img].keys():
+                #NOTE: se esiste la malattia ma non la classe base, metto a 0 la percentuale di malattia
+                result[id_img][key] = 0.0
+                 
+        
+        if reference_labels['foglia_vite'] in result[id_img].keys():
+            result[id_img].pop(reference_labels['foglia_vite'])
+        
+        if reference_labels['grappolo_vite'] in result[id_img].keys():
+            result[id_img].pop(reference_labels['grappolo_vite'])
+        
     return result
+    
+def compute_disease_area_error(ground_truth_res, evaluation_results):
+    '''
+    lo scopo di questo metodo è calcolare l'errore medio della
+    percentuale di malattia stimata dalla rete, rispetto
+    alla percentuale di ground truth
+    '''
+    error = []
+    class_error = {}
+    for id_img in range(len(ground_truth_res)):
+        for key in ground_truth_res[id_img].keys():
+            if key in evaluation_results[id_img].keys():
+                class_error[key] = abs(ground_truth_res[id_img][key] - evaluation_results[id_img][key])
+            else:
+                class_error[key] = ground_truth_res[id_img][key]
+            
+        for eval_key in evaluation_results[id_img].keys():
+            if eval_key not in ground_truth_res[id_img].keys() and evaluation_results[id_img][eval_key] > 0.0:
+                class_error[eval_key] = evaluation_results[id_img][eval_key]
+        
+        error.append(class_error)
+        class_error = {}
+    
+    return error         
+             
+def compute_avg_error_classwise(area_error, classes):
+    count = [0] * len(classes)
+    class_error = [0.0] * len(classes)
+    
+    for img_err in area_error:
+        for key in img_err.keys():
+            count[key] += 1
+            class_error[key] += img_err[key]
+    
+    for i in range(len(class_error)):
+        if count[i] > 0:
+            temp = class_error[i]
+            class_error[i] = temp / count[i]
+        else:
+            class_error[i] = 0.0
+    
+    avg_error = {}
+    for i in range(len(class_error)):
+        avg_error[classes[i]] = class_error[i]
+        
+    return avg_error
 
 def main():
     args = parse_args()
@@ -322,22 +412,31 @@ def main():
             eval_kwargs.update(dict(metric=args.eval, **kwargs))
             print(dataset.evaluate(outputs, **eval_kwargs))
 
-    '''TODO dopo aver ottenuto i risultati, effettuo
-    il calolo della percentuale della malattia per foglia
-    del ground truth'''
+    '''dopo aver ottenuto i risultati, effettuo
+    il calolo della percentuale della malattia rispetto 
+    alla superclasse rispettiva(grappolo o foglia) sia per il
+    ground truth che per le maschere ottenute dal test e le confronto
+    per calcolare l'errore per immagine di area malata e poi estrarre
+    l'errore medio per classe'''
+    
     reference_labels = {}
     for j in range(len(dataset.CLASSES)):
         if dataset.CLASSES[j] == 'foglia_vite':
             reference_labels['foglia_vite'] = j
         elif dataset.CLASSES[j] == 'grappolo_vite':
             reference_labels['grappolo_vite'] = j
+        elif dataset.CLASSES[j] == 'oidio_tralci':
+            reference_labels['oidio_tralci'] = j
     
     gt_results = get_gt_masks(dataset, reference_labels)
-    
     eval_results = get_test_masks(dataset, outputs, reference_labels, args.show_score_thr)
-        
-            
+    area_error = compute_disease_area_error(gt_results, eval_results)
     
+    avg_error = compute_avg_error_classwise(area_error, dataset.CLASSES)
+    avg_error.pop('oidio_tralci')
+    avg_error.pop('grappolo_vite')
+    avg_error.pop('foglia_vite')
+    print(avg_error)
 
 if __name__ == '__main__':
     main()
