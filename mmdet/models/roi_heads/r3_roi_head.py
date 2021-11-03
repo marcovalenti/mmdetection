@@ -143,6 +143,7 @@ class R3RoIHead(CascadeRoIHead):
             rois=rois,
             bbox_targets=bbox_targets,
         )
+        
         return bbox_results
 
     def _mask_forward_train(self,
@@ -218,6 +219,7 @@ class R3RoIHead(CascadeRoIHead):
                 bbox_semantic_feat = F.adaptive_avg_pool2d(
                     bbox_semantic_feat, bbox_feats.shape[-2:])
             bbox_feats += bbox_semantic_feat
+        import ipdb; ipdb.set_trace()
         cls_score, bbox_pred = bbox_head(bbox_feats)
 
         bbox_results = dict(cls_score=cls_score, bbox_pred=bbox_pred)
@@ -331,18 +333,18 @@ class R3RoIHead(CascadeRoIHead):
                     gt_labels[j],
                     feats=[lvl_feat[j][None] for lvl_feat in x])
                 sampling_results.append(sampling_result)
-
+            
             # bbox head forward and loss
             bbox_results = \
                 self._bbox_forward_train(
                     idx, x, sampling_results, gt_bboxes, gt_labels,
                     rcnn_train_cfg, semantic_feat)
             roi_labels = bbox_results['bbox_targets'][0]
-
+            
             for name, value in bbox_results['loss_bbox'].items():
                 losses[f's{i}.{name}'] = (
                     value * lw if 'loss' in name else value)
-
+                    
             # interleaved execution: use regressed bboxes by the box branch
             # to train the mask branch
             if self.interleaved:
@@ -364,7 +366,7 @@ class R3RoIHead(CascadeRoIHead):
                             gt_labels[j],
                             feats=[lvl_feat[j][None] for lvl_feat in x])
                         sampling_results.append(sampling_result)
-
+            
             # mask head forward and loss
             if self.with_mask:
                 mask_results = self._mask_forward_train(

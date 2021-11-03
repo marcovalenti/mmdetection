@@ -17,7 +17,8 @@ model = dict(
             featmap_strides=[4, 8, 16, 32]),
         bbox_head=[
             dict(
-                type='Shared2FCBBoxHead',
+                #type='Shared2FCBBoxHead',
+                type='Shared2FCBBoxHeadLeaves',
                 in_channels=256,
                 fc_out_channels=1024,
                 roi_feat_size=7,

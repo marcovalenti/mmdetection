@@ -1,6 +1,6 @@
 from .bbox_head import BBoxHead
 from .convfc_bbox_head import (ConvFCBBoxHead, Shared2FCBBoxHead,
-                               Shared4Conv1FCBBoxHead)
+                               Shared4Conv1FCBBoxHead, Shared2FCBBoxHeadLeaves)
 from .dii_head import DIIHead
 from .double_bbox_head import DoubleConvFCBBoxHead
 from .sabl_head import SABLHead
@@ -14,4 +14,5 @@ __all__ = [
     'SCNetBBoxHead',
     'Shared2FCC2BBoxHead',
     'Shared2FCCBBoxHead',
+    'Shared2FCBBoxHeadLeaves',
 ]

@@ -15,6 +15,8 @@ class ConvFCBBoxHead(BBoxHead):
                                     /-> cls convs -> cls fcs -> cls
         shared convs -> shared fcs
                                     \-> reg convs -> reg fcs -> reg
+                                    
+                                   (\-> dis convs -> dis fcs -> dis)
     """  # noqa: W605
 
     def __init__(self,
@@ -28,9 +30,16 @@ class ConvFCBBoxHead(BBoxHead):
                  fc_out_channels=1024,
                  conv_cfg=None,
                  norm_cfg=None,
+                 with_dis=False, #for leaves
+                 num_dis_convs=0,
+                 num_dis_fcs=0,
                  *args,
                  **kwargs):
         super(ConvFCBBoxHead, self).__init__(*args, **kwargs)
+        #only for leaves
+        self.with_dis = with_dis
+        self.num_dis_convs = num_dis_convs
+        self.num_dis_fcs = num_dis_fcs
         assert (num_shared_convs + num_shared_fcs + num_cls_convs +
                 num_cls_fcs + num_reg_convs + num_reg_fcs > 0)
         if num_cls_convs > 0 or num_reg_convs > 0:
@@ -39,6 +48,8 @@ class ConvFCBBoxHead(BBoxHead):
             assert num_cls_convs == 0 and num_cls_fcs == 0
         if not self.with_reg:
             assert num_reg_convs == 0 and num_reg_fcs == 0
+        if not self.with_dis:
+            assert num_dis_convs == 0 and num_dis_fcs == 0
         self.num_shared_convs = num_shared_convs
         self.num_shared_fcs = num_shared_fcs
         self.num_cls_convs = num_cls_convs
@@ -49,7 +60,7 @@ class ConvFCBBoxHead(BBoxHead):
         self.fc_out_channels = fc_out_channels
         self.conv_cfg = conv_cfg
         self.norm_cfg = norm_cfg
-
+        
         # add shared convs and fcs
         self.shared_convs, self.shared_fcs, last_layer_dim = \
             self._add_conv_fc_branch(
@@ -66,7 +77,13 @@ class ConvFCBBoxHead(BBoxHead):
         self.reg_convs, self.reg_fcs, self.reg_last_dim = \
             self._add_conv_fc_branch(
                 self.num_reg_convs, self.num_reg_fcs, self.shared_out_channels)
-
+        
+        #add dis branch(only for leaves)
+        if self.with_dis:
+            self.dis_convs, self.dis_fcs, self.dis_last_dim = \
+                self._add_conv_fc_branch(
+                    self.num_dis_convs, self.num_dis_fcs, self.shared_out_channels)
+            
         if self.num_shared_fcs == 0 and not self.with_avg_pool:
             if self.num_cls_fcs == 0:
                 self.cls_last_dim *= self.roi_feat_area
@@ -81,6 +98,8 @@ class ConvFCBBoxHead(BBoxHead):
             out_dim_reg = (4 if self.reg_class_agnostic else 4 *
                            self.num_classes)
             self.fc_reg = nn.Linear(self.reg_last_dim, out_dim_reg)
+        if self.with_dis:
+            self.fc_dis = nn.Linear(self.cls_last_dim, self.num_classes)
 
     def _add_conv_fc_branch(self,
                             num_branch_convs,
@@ -126,7 +145,7 @@ class ConvFCBBoxHead(BBoxHead):
     def init_weights(self):
         super(ConvFCBBoxHead, self).init_weights()
         # conv layers are already initialized by ConvModule
-        for module_list in [self.shared_fcs, self.cls_fcs, self.reg_fcs]:
+        for module_list in [self.shared_fcs, self.cls_fcs, self.reg_fcs, self.dis_fcs]:
             for m in module_list.modules():
                 if isinstance(m, nn.Linear):
                     nn.init.xavier_uniform_(m.weight)
@@ -149,6 +168,17 @@ class ConvFCBBoxHead(BBoxHead):
         # separate branches
         x_cls = x
         x_reg = x
+        if self.with_dis:
+            x_dis = x
+            
+            for conv in self.dis_convs:
+                x_dis = conv(x_dis)
+            if x_cls.dim() > 2:
+                if self.with_avg_pool:
+                    x_cls = self.avg_pool(x_cls)
+                x_cls = x_cls.flatten(1)
+            for fc in self.cls_fcs:
+                x_cls = self.relu(fc(x_cls))
 
         for conv in self.cls_convs:
             x_cls = conv(x_cls)
@@ -170,7 +200,8 @@ class ConvFCBBoxHead(BBoxHead):
 
         cls_score = self.fc_cls(x_cls) if self.with_cls else None
         bbox_pred = self.fc_reg(x_reg) if self.with_reg else None
-        return cls_score, bbox_pred
+        dis_pred = self.fc_dis(x_dis) if self.with_dis else None
+        return cls_score, bbox_pred, dis_pred
 
 
 @HEADS.register_module()
@@ -185,6 +216,24 @@ class Shared2FCBBoxHead(ConvFCBBoxHead):
             num_reg_convs=0,
             num_reg_fcs=0,
             fc_out_channels=fc_out_channels,
+            *args,
+            **kwargs)
+
+@HEADS.register_module()
+class Shared2FCBBoxHeadLeaves(ConvFCBBoxHead):
+
+    def __init__(self, fc_out_channels=1024, *args, **kwargs):
+        super(Shared2FCBBoxHeadLeaves, self).__init__(
+            num_shared_convs=0,
+            num_shared_fcs=2,
+            num_cls_convs=0,
+            num_cls_fcs=0,
+            num_reg_convs=0,
+            num_reg_fcs=0,
+            fc_out_channels=fc_out_channels,
+            with_dis=True, #only for leaves
+            num_dis_convs=0,
+            num_dis_fcs=0,
             *args,
             **kwargs)
 
