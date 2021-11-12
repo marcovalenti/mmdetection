@@ -53,6 +53,16 @@ class R3RoIHead(CascadeRoIHead):
         # mask iou configuration
         if mask_iou_head is not None:
             self.mask_iou_head = build_head(mask_iou_head)
+       
+        #TODO non mettere hard coded  
+        self.reference_labels = dict([('grappolo_vite', 1), 
+                                      ('foglia_vite', 3),
+                                      ('oidio_tralci', 6)])
+        self.classes = ['oidio_grappolo', 'grappolo_vite', 'black_rot_foglia' ,
+		          'foglia_vite', 'oidio_foglia', 'peronospora_foglia', 'oidio_tralci',
+		          'botrite_grappolo', 'accartocciamento_fogliare', 'botrite_foglia',
+		          'black_rot_grappolo', 'virosi_pinot_grigio', 'red_blotch_foglia', 'malattia_esca',
+		          'carie_bianca_grappolo', 'peronospora_grappolo']
 
     def init_weights(self, pretrained):
         """Initialize the weights in head.
@@ -131,11 +141,24 @@ class R3RoIHead(CascadeRoIHead):
         rois = bbox2roi([res.bboxes for res in sampling_results])
         bbox_results = self._bbox_forward(
             stage, x, rois, semantic_feat=semantic_feat)
-
-        bbox_targets = bbox_head.get_targets(sampling_results, gt_bboxes,
-                                             gt_labels, rcnn_train_cfg)
-        loss_bbox = bbox_head.loss(bbox_results['cls_score'],
-                                   bbox_results['bbox_pred'], rois,
+        
+        if bbox_head.with_dis:
+            bbox_targets = bbox_head.get_targets(sampling_results, gt_bboxes,
+                                                 gt_labels, rcnn_train_cfg, 
+                                                 self.reference_labels,
+                                                 self.classes)
+                                                 
+            loss_bbox = bbox_head.loss(bbox_results['cls_score'],
+                                   bbox_results['bbox_pred'],
+                                   bbox_results['dis_pred'], rois,
+                                   *bbox_targets)
+        else:
+            bbox_targets = bbox_head.get_targets(sampling_results, gt_bboxes,
+                                                 gt_labels, rcnn_train_cfg)
+        
+            loss_bbox = bbox_head.loss(bbox_results['cls_score'],
+                                   bbox_results['bbox_pred'],
+                                   rois,
                                    *bbox_targets)
 
         bbox_results.update(
@@ -219,10 +242,12 @@ class R3RoIHead(CascadeRoIHead):
                 bbox_semantic_feat = F.adaptive_avg_pool2d(
                     bbox_semantic_feat, bbox_feats.shape[-2:])
             bbox_feats += bbox_semantic_feat
-        import ipdb; ipdb.set_trace()
-        cls_score, bbox_pred = bbox_head(bbox_feats)
 
-        bbox_results = dict(cls_score=cls_score, bbox_pred=bbox_pred)
+        cls_score, bbox_pred, dis_pred = bbox_head(bbox_feats)
+        if dis_pred != None:
+            bbox_results = dict(cls_score=cls_score, bbox_pred=bbox_pred, dis_pred=dis_pred)
+        else:
+            bbox_results = dict(cls_score=cls_score, bbox_pred=bbox_pred)
         return bbox_results
 
     # TODO nobody call it! can we deprecate it?
@@ -419,6 +444,8 @@ class R3RoIHead(CascadeRoIHead):
         # "ms" in variable names means multi-stage
         ms_bbox_result = {}
         ms_segm_result = {}
+        if self.bbox_head[-1].with_dis:
+            ms_dis_result = {}
         ms_scores = []
         rcnn_test_cfg = self.test_cfg
 
@@ -432,10 +459,14 @@ class R3RoIHead(CascadeRoIHead):
             # split batch bbox prediction back to each image
             cls_score = bbox_results['cls_score']
             bbox_pred = bbox_results['bbox_pred']
+            if self.bbox_head[-1].with_dis:
+                dis_pred = bbox_results['dis_pred']
             num_proposals_per_img = tuple(len(p) for p in proposal_list)
             rois = rois.split(num_proposals_per_img, 0)
             cls_score = cls_score.split(num_proposals_per_img, 0)
             bbox_pred = bbox_pred.split(num_proposals_per_img, 0)
+            if self.bbox_head[-1].with_dis:
+                dis_pred = dis_pred.split(num_proposals_per_img, 0)
             ms_scores.append(cls_score)
 
             if i < self.num_stages_test - 1:
@@ -455,24 +486,46 @@ class R3RoIHead(CascadeRoIHead):
         # apply bbox post-processing to each image individually
         det_bboxes = []
         det_labels = []
+        if self.bbox_head[-1].with_dis:
+            det_diseases = []
         for i in range(num_imgs):
-            det_bbox, det_label = self.bbox_head[-1].get_bboxes(
-                rois[i],
-                cls_score[i],
-                bbox_pred[i],
-                img_shapes[i],
-                scale_factors[i],
-                rescale=rescale,
-                cfg=rcnn_test_cfg)
-            det_bboxes.append(det_bbox)
-            det_labels.append(det_label)
+            if self.bbox_head[-1].with_dis:
+                det_bbox, det_label, det_dis = self.bbox_head[-1].get_bboxes(
+                    rois[i],
+                    cls_score[i],
+                    bbox_pred[i],
+                    dis_pred[i],
+                    img_shapes[i],
+                    scale_factors[i],
+                    rescale=rescale,
+                    cfg=rcnn_test_cfg)
+                det_bboxes.append(det_bbox)
+                det_labels.append(det_label)
+                det_diseases.append(det_dis)
+            else:
+                det_bbox, det_label = self.bbox_head[-1].get_bboxes(
+                    rois[i],
+                    cls_score[i],
+                    bbox_pred[i],
+                    img_shapes[i],
+                    scale_factors[i],
+                    rescale=rescale,
+                    cfg=rcnn_test_cfg)
+                det_bboxes.append(det_bbox)
+                det_labels.append(det_label)
         bbox_result = [
             bbox2result(det_bboxes[i], det_labels[i],
                         self.bbox_head[-1].num_classes)
             for i in range(num_imgs)
         ]
+             
         ms_bbox_result['ensemble'] = bbox_result
-
+        if self.bbox_head[-1].with_dis:
+            for i in range(num_imgs):
+                diss = det_diseases[i].detach().cpu().numpy()
+                labels = det_labels[i].detach().cpu().numpy()
+                dis_result = [diss[labels == j] for j in range(self.bbox_head[-1].num_classes)]
+            ms_dis_result['ensemble'] = [dis_result]
         if self.with_mask:
             # init mask iou score
             mask_scores = []
@@ -565,11 +618,19 @@ class R3RoIHead(CascadeRoIHead):
                 ms_segm_result['ensemble'] = segm_results
 
         if self.with_mask:
+            #Uncomment this section only for testing the correctness
+            #of the dis feature. Keep it commented during train
+            #if self.bbox_head[-1].with_dis:
+            #    results = list(
+            #        zip(ms_bbox_result['ensemble'], ms_segm_result['ensemble'], ms_dis_result['ensemble']))
+            #else:
+            #    results = list(
+            #        zip(ms_bbox_result['ensemble'], ms_segm_result['ensemble']))
             results = list(
-                zip(ms_bbox_result['ensemble'], ms_segm_result['ensemble']))
+                    zip(ms_bbox_result['ensemble'], ms_segm_result['ensemble']))
         else:
             results = ms_bbox_result['ensemble']
-
+            
         return results
 
     def aug_test(self, img_feats, proposal_list, img_metas, rescale=False):

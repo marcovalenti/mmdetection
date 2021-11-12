@@ -17,7 +17,7 @@ model = dict(
             featmap_strides=[4, 8, 16, 32]),
         bbox_head=[
             dict(
-                type='Shared2FCBBoxHead',
+                type='Shared2FCBBoxHeadLeaves',
                 in_channels=256,
                 fc_out_channels=1024,
                 roi_feat_size=7,
@@ -51,9 +51,9 @@ model = dict(
                     type='CrossEntropyLoss', use_mask=True, loss_weight=1.0))
         ]))
 
-optimizer = dict (type = 'SGD', lr = 0.0025, momentum = 0.9, weight_decay = 0.0001)
 
 data = dict(
     samples_per_gpu=1,
     workers_per_gpu=1)
 
+optimizer = dict (type = 'SGD', lr = 0.0025 / 2, momentum = 0.9, weight_decay = 0.0001)

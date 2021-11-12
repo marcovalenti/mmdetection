@@ -1,9 +1,16 @@
 import torch.nn as nn
+import torch.nn.functional as F
+import torch
 from mmcv.cnn import ConvModule
+from mmcv.runner import force_fp32
 
-from mmdet.models.builder import HEADS
+from mmdet.models.builder import HEADS, build_loss
+from mmdet.models.losses import accuracy
 from .bbox_head import BBoxHead
 
+from mmdet.core import multi_apply, multiclass_nms
+
+from mmdet.core.bbox.iou_calculators.builder import build_iou_calculator
 
 @HEADS.register_module()
 class ConvFCBBoxHead(BBoxHead):
@@ -145,11 +152,18 @@ class ConvFCBBoxHead(BBoxHead):
     def init_weights(self):
         super(ConvFCBBoxHead, self).init_weights()
         # conv layers are already initialized by ConvModule
-        for module_list in [self.shared_fcs, self.cls_fcs, self.reg_fcs, self.dis_fcs]:
-            for m in module_list.modules():
-                if isinstance(m, nn.Linear):
-                    nn.init.xavier_uniform_(m.weight)
-                    nn.init.constant_(m.bias, 0)
+        if self.with_dis:
+            for module_list in [self.shared_fcs, self.cls_fcs, self.reg_fcs, self.dis_fcs]:
+                for m in module_list.modules():
+                    if isinstance(m, nn.Linear):
+                        nn.init.xavier_uniform_(m.weight)
+                        nn.init.constant_(m.bias, 0)
+        else:
+            for module_list in [self.shared_fcs, self.cls_fcs, self.reg_fcs]:
+                for m in module_list.modules():
+                    if isinstance(m, nn.Linear):
+                        nn.init.xavier_uniform_(m.weight)
+                        nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
         # shared part
@@ -173,12 +187,12 @@ class ConvFCBBoxHead(BBoxHead):
             
             for conv in self.dis_convs:
                 x_dis = conv(x_dis)
-            if x_cls.dim() > 2:
+            if x_dis.dim() > 2:
                 if self.with_avg_pool:
-                    x_cls = self.avg_pool(x_cls)
-                x_cls = x_cls.flatten(1)
-            for fc in self.cls_fcs:
-                x_cls = self.relu(fc(x_cls))
+                    x_dis = self.avg_pool(x_dis)
+                x_dis = x_dis.flatten(1)
+            for fc in self.dis_fcs:
+                x_dis = self.relu(fc(x_dis))
 
         for conv in self.cls_convs:
             x_cls = conv(x_cls)
@@ -236,6 +250,303 @@ class Shared2FCBBoxHeadLeaves(ConvFCBBoxHead):
             num_dis_fcs=0,
             *args,
             **kwargs)
+        
+        loss_dis=dict(type='FocalLoss',
+                      use_sigmoid=True,
+                      gamma=2.0,
+                      alpha=0.15,
+                      loss_weight=1.0)    
+        #loss_dis=dict(type='CrossEntropyLoss',
+        #             use_sigmoid=True,
+        #             loss_weight=1.0)
+        self.loss_dis = build_loss(loss_dis)
+            
+    #Override
+    def get_targets(self,
+                    sampling_results,
+                    gt_bboxes,
+                    gt_labels,
+                    rcnn_train_cfg,
+                    reference_labels,
+                    classes,
+                    concat=True):
+        """Calculate the ground truth for all samples in a batch according to
+        the sampling_results.
+        Almost the same as the implementation in bbox_head, we passed
+        additional parameters pos_inds_list and neg_inds_list to
+        `_get_target_single` function.
+        Args:
+            sampling_results (List[obj:SamplingResults]): Assign results of
+                all images in a batch after sampling.
+            gt_bboxes (list[Tensor]): Gt_bboxes of all images in a batch,
+                each tensor has shape (num_gt, 4),  the last dimension 4
+                represents [tl_x, tl_y, br_x, br_y].
+            gt_labels (list[Tensor]): Gt_labels of all images in a batch,
+                each tensor has shape (num_gt,).
+            rcnn_train_cfg (obj:ConfigDict): `train_cfg` of RCNN.
+            concat (bool): Whether to concatenate the results of all
+                the images in a single batch.
+        Returns:
+            Tuple[Tensor]: Ground truth for proposals in a single image.
+            Containing the following list of Tensors:
+                - labels (list[Tensor],Tensor): Gt_labels for all
+                  proposals in a batch, each tensor in list has
+                  shape (num_proposals,) when `concat=False`, otherwise
+                  just a single tensor has shape (num_all_proposals,).
+                - label_weights (list[Tensor]): Labels_weights for
+                  all proposals in a batch, each tensor in list has
+                  shape (num_proposals,) when `concat=False`, otherwise
+                  just a single tensor has shape (num_all_proposals,).
+                - bbox_targets (list[Tensor],Tensor): Regression target
+                  for all proposals in a batch, each tensor in list
+                  has shape (num_proposals, 4) when `concat=False`,
+                  otherwise just a single tensor has shape
+                  (num_all_proposals, 4), the last dimension 4 represents
+                  [tl_x, tl_y, br_x, br_y].
+                - bbox_weights (list[tensor],Tensor): Regression weights for
+                  all proposals in a batch, each tensor in list has shape
+                  (num_proposals, 4) when `concat=False`, otherwise just a
+                  single tensor has shape (num_all_proposals, 4).
+                - dis_targets (list[tensor], Tensor): Gt_dis for all
+                  proposal in a batch, each tensor in list has
+                  shape (num_proposal,) when 'concat=False`, otherwise
+                  just a single tensor has shape (num_all_proposals,).
+        """
+        
+        pos_bboxes_list = [res.pos_bboxes for res in sampling_results]
+        neg_bboxes_list = [res.neg_bboxes for res in sampling_results]
+        pos_gt_bboxes_list = [res.pos_gt_bboxes for res in sampling_results]
+        pos_gt_labels_list = [res.pos_gt_labels for res in sampling_results]
+        labels, label_weights, bbox_targets, bbox_weights = multi_apply(
+            self._get_target_single,
+            pos_bboxes_list,
+            neg_bboxes_list,
+            pos_gt_bboxes_list,
+            pos_gt_labels_list,
+            cfg=rcnn_train_cfg)
+            
+        #processing for dis_target
+        iou_calculator=dict(type='BboxOverlaps2D')                                                                                                        
+        iou_calculator = build_iou_calculator(iou_calculator)
+        isolation_thr = 0.45	#TODO da mettere come arg
+        #retrive the gt_superclass bboxes
+        dis_targets = []
+        for i, res in enumerate(sampling_results):
+            ref_grap_list =[]
+            ref_leav_list =[]
+            ref_grap_dis_list =[]
+            ref_leav_dis_list =[]
+            for j, bbox in enumerate(gt_bboxes[i]):
+                if gt_labels[i][j] == reference_labels['grappolo_vite']:
+                    ref_grap_list.append(bbox)
+                elif gt_labels[i][j] == reference_labels['foglia_vite']:
+                    ref_leav_list.append(bbox)
+                elif 'grappolo' in classes[gt_labels[i][j]]:
+                    ref_grap_dis_list.append(bbox)
+                elif 'foglia' in classes[gt_labels[i][j]] or classes[gt_labels[i][j]] == 'malattia_esca'\
+                    or classes[gt_labels[i][j]] == 'virosi_pinot_grigio':
+                        ref_leav_dis_list.append(bbox)
+            
+            if len(ref_grap_list) > 0:
+                ref_grap_tensor = torch.cat(ref_grap_list)
+                ref_grap_tensor = torch.reshape(ref_grap_tensor, (len(ref_grap_list), 4))
+            
+            if len(ref_leav_list) > 0:
+                ref_leav_tensor = torch.cat(ref_leav_list)
+                ref_leav_tensor = torch.reshape(ref_leav_tensor, (len(ref_leav_list), 4))
+                
+            if len(ref_grap_dis_list) > 0:
+                ref_grap_dis_tensor = torch.cat(ref_grap_dis_list)
+                ref_grap_dis_tensor = torch.reshape(ref_grap_dis_tensor, (len(ref_grap_dis_list), 4))
+            
+            if len(ref_leav_dis_list) > 0:
+                ref_leav_dis_tensor = torch.cat(ref_leav_dis_list)
+                ref_leav_dis_tensor = torch.reshape(ref_leav_dis_tensor, (len(ref_leav_dis_list), 4))
+            
+            num_pos = res.pos_bboxes.size(0)
+            num_neg = res.neg_bboxes.size(0)
+            num_samples = num_pos + num_neg
+            dis_tensor= res.pos_bboxes.new_full((num_samples, ), -1, dtype=torch.long)
+            dis_list = []
+            for j, bbox in enumerate(res.pos_bboxes):
+                #trick for using the iof calculator
+                bbox = bbox.unsqueeze(0)
+                
+                if res.pos_gt_labels[j] == reference_labels['grappolo_vite']:
+                    if len(ref_grap_dis_list) > 0:
+                        overlaps = iou_calculator(bbox, ref_grap_dis_tensor, mode='iof')
+                        overlaps = overlaps < isolation_thr
+                        if overlaps.all():
+                            dis_list.append(0)    #the grape is healthy
+                        else:
+                            dis_list.append(1)    #the grape is affected by a disease
+                    else:
+                        dis_list.append(0)    #the grape is healthy
+                        
+                elif res.pos_gt_labels[j] == reference_labels['foglia_vite']:
+                    if len(ref_leav_dis_list) > 0:
+                        overlaps = iou_calculator(bbox, ref_leav_dis_tensor, mode='iof')
+                        overlaps = overlaps < isolation_thr
+                        if overlaps.all():
+                            dis_list.append(0)    #the leaf is healthy
+                        else:
+                            dis_list.append(1)    #the leaf is affected by a disease
+                    else:
+                        dis_list.append(0)    #the leaf is healthy
+                        
+                elif 'grappolo' in classes[res.pos_gt_labels[j]] and res.pos_gt_labels[j] != reference_labels['grappolo_vite']:
+                    if len(ref_grap_list) > 0:
+                        overlaps = iou_calculator(bbox, ref_grap_tensor, mode='iof')
+                        overlaps = overlaps < isolation_thr
+                        if overlaps.all():
+                            dis_list.append(0)    #the disease is isolated
+                        else:
+                            dis_list.append(1)    #the disease is inside a leaf or grape
+                    else:
+                        dis_list.append(0)    #the disease is isolated
+
+                elif (('foglia' in classes[res.pos_gt_labels[j]] or classes[res.pos_gt_labels[j]] == 'malattia_esca'
+                    or classes[res.pos_gt_labels[j]] == 'virosi_pinot_grigio')
+                    and res.pos_gt_labels[j] != reference_labels['foglia_vite']):
+                    if len(ref_leav_list) > 0:
+                        overlaps = iou_calculator(bbox, ref_leav_tensor, mode='iof')
+                        overlaps = overlaps < isolation_thr
+                        if overlaps.all():
+                            dis_list.append(0)    #the disease is isolated
+                        else:
+                            dis_list.append(1)    #the disease is inside a leaf or grape
+                    else:
+                        dis_list.append(0)    #the disease is isolated
+                
+                elif res.pos_gt_labels[j] == reference_labels['oidio_tralci']:
+                    dis_list.append(-1)    #the disease is not considered for now
+            
+            dis_tensor[:num_pos] = torch.tensor(dis_list)
+            dis_targets.append(dis_tensor)         
+            
+        if concat:
+            labels = torch.cat(labels, 0)
+            label_weights = torch.cat(label_weights, 0)
+            bbox_targets = torch.cat(bbox_targets, 0)
+            bbox_weights = torch.cat(bbox_weights, 0)
+            dis_targets = torch.cat(dis_targets, 0)
+        
+        del dis_tensor
+        torch.cuda.empty_cache()
+        return labels, label_weights, bbox_targets, bbox_weights, dis_targets
+    
+    #Override
+    @force_fp32(apply_to=('cls_score', 'bbox_pred', 'dis_pred'))
+    def loss(self,
+             cls_score,
+             bbox_pred,
+             dis_pred,
+             rois,
+             labels,
+             label_weights,
+             bbox_targets,
+             bbox_weights,
+             dis_targets,
+             reduction_override=None):
+        losses = dict()
+        if cls_score is not None:
+            avg_factor = max(torch.sum(label_weights > 0).float().item(), 1.)
+            if cls_score.numel() > 0:
+                losses['loss_cls'] = self.loss_cls(
+                    cls_score,
+                    labels,
+                    label_weights,
+                    avg_factor=avg_factor,
+                    reduction_override=reduction_override)
+                losses['acc'] = accuracy(cls_score, labels)
+        if bbox_pred is not None:
+            bg_class_ind = self.num_classes
+            # 0~self.num_classes-1 are FG, self.num_classes is BG
+            pos_inds = (labels >= 0) & (labels < bg_class_ind)
+            # do not perform bounding box regression for BG anymore.
+            if pos_inds.any():
+                if self.reg_decoded_bbox:
+                    # When the regression loss (e.g. `IouLoss`,
+                    # `GIouLoss`, `DIouLoss`) is applied directly on
+                    # the decoded bounding boxes, it decodes the
+                    # already encoded coordinates to absolute format.
+                    bbox_pred = self.bbox_coder.decode(rois[:, 1:], bbox_pred)
+                if self.reg_class_agnostic:
+                    pos_bbox_pred = bbox_pred.view(
+                        bbox_pred.size(0), 4)[pos_inds.type(torch.bool)]
+                else:
+                    pos_bbox_pred = bbox_pred.view(
+                        bbox_pred.size(0), -1,
+                        4)[pos_inds.type(torch.bool),
+                           labels[pos_inds.type(torch.bool)]]
+                losses['loss_bbox'] = self.loss_bbox(
+                    pos_bbox_pred,
+                    bbox_targets[pos_inds.type(torch.bool)],
+                    bbox_weights[pos_inds.type(torch.bool)],
+                    avg_factor=bbox_targets.size(0),
+                    reduction_override=reduction_override)
+            else:
+                losses['loss_bbox'] = bbox_pred[pos_inds].sum()
+             
+        if dis_pred is not None:
+            pos_inds = dis_targets != -1
+            if pos_inds.any():
+                pos_dis_pred = dis_pred[pos_inds.type(torch.bool)]
+                pos_dis_targets = dis_targets[pos_inds.type(torch.bool)]
+                avg_factor = dis_pred.size(0)
+                
+                losses['loss_dis'] = self.loss_dis(
+                    pos_dis_pred,
+                    pos_dis_targets,
+                    avg_factor = avg_factor,
+                    reduction_override=reduction_override)
+        
+        return losses
+        
+    #Override
+    @force_fp32(apply_to=('cls_score', 'bbox_pred', 'dis_pred'))
+    def get_bboxes(self,
+                   rois,
+                   cls_score,
+                   bbox_pred,
+                   dis_pred,
+                   img_shape,
+                   scale_factor,
+                   rescale=False,
+                   cfg=None):
+        if isinstance(cls_score, list):
+            cls_score = sum(cls_score) / float(len(cls_score))
+        scores = F.softmax(cls_score, dim=1) if cls_score is not None else None
+
+        if bbox_pred is not None:
+            bboxes = self.bbox_coder.decode(
+                rois[:, 1:], bbox_pred, max_shape=img_shape)
+        else:
+            bboxes = rois[:, 1:].clone()
+            if img_shape is not None:
+                bboxes[:, [0, 2]].clamp_(min=0, max=img_shape[1])
+                bboxes[:, [1, 3]].clamp_(min=0, max=img_shape[0])
+
+        if rescale and bboxes.size(0) > 0:
+            if isinstance(scale_factor, float):
+                bboxes /= scale_factor
+            else:
+                scale_factor = bboxes.new_tensor(scale_factor)
+                bboxes = (bboxes.view(bboxes.size(0), -1, 4) /
+                          scale_factor).view(bboxes.size()[0], -1)
+        if dis_pred is not None:
+            diseases = F.sigmoid(dis_pred)
+        
+        if cfg is None:
+            return bboxes, scores, diseases
+        else:
+            det_bboxes, det_labels, inds = multiclass_nms(bboxes, scores,
+                                                    cfg.score_thr, cfg.nms,
+                                                    cfg.max_per_img,
+                                                    return_inds=True)
+            diseases = diseases.reshape(-1)
+            det_dis = diseases[inds]
+            return det_bboxes, det_labels, det_dis
 
 
 @HEADS.register_module()

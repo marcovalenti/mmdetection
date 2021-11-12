@@ -57,8 +57,12 @@ def single_gpu_test(model,
 
         # encode mask results
         if isinstance(result[0], tuple):
-            result = [(bbox_results, encode_mask_results(mask_results))
-                      for bbox_results, mask_results in result]
+            if len(result[0]) < 3:
+                result = [(bbox_results, encode_mask_results(mask_results))
+                          for bbox_results, mask_results in result]
+            else:
+                result = [(bbox_results, encode_mask_results(mask_results), dis_result)
+                      for bbox_results, mask_results, dis_result in result]
         results.extend(result)
 
         for _ in range(batch_size):
