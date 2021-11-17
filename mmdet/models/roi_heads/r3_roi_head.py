@@ -141,7 +141,6 @@ class R3RoIHead(CascadeRoIHead):
         rois = bbox2roi([res.bboxes for res in sampling_results])
         bbox_results = self._bbox_forward(
             stage, x, rois, semantic_feat=semantic_feat)
-        
         if bbox_head.with_dis:
             bbox_targets = bbox_head.get_targets(sampling_results, gt_bboxes,
                                                  gt_labels, rcnn_train_cfg, 
@@ -620,14 +619,14 @@ class R3RoIHead(CascadeRoIHead):
         if self.with_mask:
             #Uncomment this section only for testing the correctness
             #of the dis feature. Keep it commented during train
-            #if self.bbox_head[-1].with_dis:
-            #    results = list(
-            #        zip(ms_bbox_result['ensemble'], ms_segm_result['ensemble'], ms_dis_result['ensemble']))
-            #else:
-            #    results = list(
-            #        zip(ms_bbox_result['ensemble'], ms_segm_result['ensemble']))
-            results = list(
+            if self.bbox_head[-1].with_dis:
+                results = list(
+                    zip(ms_bbox_result['ensemble'], ms_segm_result['ensemble'], ms_dis_result['ensemble']))
+            else:
+                results = list(
                     zip(ms_bbox_result['ensemble'], ms_segm_result['ensemble']))
+            #results = list(
+            #        zip(ms_bbox_result['ensemble'], ms_segm_result['ensemble']))
         else:
             results = ms_bbox_result['ensemble']
             

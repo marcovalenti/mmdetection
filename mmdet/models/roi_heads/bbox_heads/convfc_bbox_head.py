@@ -106,7 +106,7 @@ class ConvFCBBoxHead(BBoxHead):
                            self.num_classes)
             self.fc_reg = nn.Linear(self.reg_last_dim, out_dim_reg)
         if self.with_dis:
-            self.fc_dis = nn.Linear(self.cls_last_dim, self.num_classes)
+            self.fc_dis = nn.Linear(self.cls_last_dim, 1)
 
     def _add_conv_fc_branch(self,
                             num_branch_convs,
@@ -254,7 +254,7 @@ class Shared2FCBBoxHeadLeaves(ConvFCBBoxHead):
         loss_dis=dict(type='FocalLoss',
                       use_sigmoid=True,
                       gamma=2.0,
-                      alpha=0.15,
+                      alpha=0.96,
                       loss_weight=1.0)    
         #loss_dis=dict(type='CrossEntropyLoss',
         #             use_sigmoid=True,
@@ -374,7 +374,7 @@ class Shared2FCBBoxHeadLeaves(ConvFCBBoxHead):
                 
                 if res.pos_gt_labels[j] == reference_labels['grappolo_vite']:
                     if len(ref_grap_dis_list) > 0:
-                        overlaps = iou_calculator(bbox, ref_grap_dis_tensor, mode='iof')
+                        overlaps = iou_calculator(ref_grap_dis_tensor, bbox, mode='iof')
                         overlaps = overlaps < isolation_thr
                         if overlaps.all():
                             dis_list.append(0)    #the grape is healthy
@@ -385,7 +385,7 @@ class Shared2FCBBoxHeadLeaves(ConvFCBBoxHead):
                         
                 elif res.pos_gt_labels[j] == reference_labels['foglia_vite']:
                     if len(ref_leav_dis_list) > 0:
-                        overlaps = iou_calculator(bbox, ref_leav_dis_tensor, mode='iof')
+                        overlaps = iou_calculator(ref_leav_dis_tensor, bbox, mode='iof')
                         overlaps = overlaps < isolation_thr
                         if overlaps.all():
                             dis_list.append(0)    #the leaf is healthy
@@ -430,9 +430,15 @@ class Shared2FCBBoxHeadLeaves(ConvFCBBoxHead):
             bbox_targets = torch.cat(bbox_targets, 0)
             bbox_weights = torch.cat(bbox_weights, 0)
             dis_targets = torch.cat(dis_targets, 0)
-        
-        del dis_tensor
-        torch.cuda.empty_cache()
+        #ind_0 = dis_targets == 0
+        #ind_1 = dis_targets == 1
+        #ind_neg_1 = dis_targets == -1
+        #import logging
+        #from mmcv.utils import print_log
+        #logger = logging.getLogger(__name__)
+        #print_log("DIS_LABEL_COUNT: num_0= {},num_1= {},num_-1= {}".format(dis_targets[ind_0].numel(), dis_targets[ind_1].numel(), dis_targets[ind_neg_1].numel()), logger = logger)
+        #del dis_tensor
+        #torch.cuda.empty_cache()
         return labels, label_weights, bbox_targets, bbox_weights, dis_targets
     
     #Override
@@ -487,14 +493,12 @@ class Shared2FCBBoxHeadLeaves(ConvFCBBoxHead):
                     reduction_override=reduction_override)
             else:
                 losses['loss_bbox'] = bbox_pred[pos_inds].sum()
-             
         if dis_pred is not None:
             pos_inds = dis_targets != -1
             if pos_inds.any():
                 pos_dis_pred = dis_pred[pos_inds.type(torch.bool)]
                 pos_dis_targets = dis_targets[pos_inds.type(torch.bool)]
                 avg_factor = dis_pred.size(0)
-                
                 losses['loss_dis'] = self.loss_dis(
                     pos_dis_pred,
                     pos_dis_targets,
@@ -544,6 +548,8 @@ class Shared2FCBBoxHeadLeaves(ConvFCBBoxHead):
                                                     cfg.score_thr, cfg.nms,
                                                     cfg.max_per_img,
                                                     return_inds=True)
+
+            diseases = diseases.expand(bboxes.size(0), scores.size(1) - 1)
             diseases = diseases.reshape(-1)
             det_dis = diseases[inds]
             return det_bboxes, det_labels, det_dis
