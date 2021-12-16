@@ -28,7 +28,7 @@ class R3RoIHead(CascadeRoIHead):
                  mask_info_flow=True,
                  ret_intermediate_results=True,
                  with_mask_loop=True,
-                 **kwargs):
+                 **kwargs): 
         super(R3RoIHead,
               self).__init__(num_stages, stage_loss_weights, **kwargs)
         assert self.with_bbox  # and self.with_mask
@@ -53,16 +53,10 @@ class R3RoIHead(CascadeRoIHead):
         # mask iou configuration
         if mask_iou_head is not None:
             self.mask_iou_head = build_head(mask_iou_head)
-       
-        #TODO non mettere hard coded  
-        self.reference_labels = dict([('grappolo_vite', 1), 
-                                      ('foglia_vite', 3),
-                                      ('oidio_tralci', 6)])
-        self.classes = ['oidio_grappolo', 'grappolo_vite', 'black_rot_foglia' ,
-		          'foglia_vite', 'oidio_foglia', 'peronospora_foglia', 'oidio_tralci',
-		          'botrite_grappolo', 'accartocciamento_fogliare', 'botrite_foglia',
-		          'black_rot_grappolo', 'virosi_pinot_grigio', 'red_blotch_foglia', 'malattia_esca',
-		          'carie_bianca_grappolo', 'peronospora_grappolo']
+
+        if self.bbox_head[-1].with_dis :
+            self.reference_labels = self.bbox_head[-1].reference_labels
+            self.classes = self.bbox_head[-1].classes
 
     def init_weights(self, pretrained):
         """Initialize the weights in head.
@@ -146,10 +140,11 @@ class R3RoIHead(CascadeRoIHead):
                                                  gt_labels, rcnn_train_cfg, 
                                                  self.reference_labels,
                                                  self.classes)
-                                                 
+            
             loss_bbox = bbox_head.loss(bbox_results['cls_score'],
                                    bbox_results['bbox_pred'],
-                                   bbox_results['dis_pred'], rois,
+                                   bbox_results['dis_pred'],
+                                   rois,
                                    *bbox_targets)
         else:
             bbox_targets = bbox_head.get_targets(sampling_results, gt_bboxes,
@@ -159,7 +154,20 @@ class R3RoIHead(CascadeRoIHead):
                                    bbox_results['bbox_pred'],
                                    rois,
                                    *bbox_targets)
-
+        '''
+        ind_0 = bbox_targets[4] == 0
+        ind_1 = bbox_targets[4] == 1
+        ind_2 = bbox_targets[4] == 2
+        ind_3 = bbox_targets[4] == 3
+        ind_neg = bbox_targets[4] == -1
+        import logging
+        from mmcv.utils import print_log
+        logger = logging.getLogger(__name__)
+        print_log("DIS_LABEL_COUNT: num_0= {}, num_1= {}, num_2= {}, num_3= {}, num_neg= {}"  \
+            .format(bbox_targets[4][ind_0].numel(), bbox_targets[4][ind_1].numel(), 
+                 bbox_targets[4][ind_2].numel(), bbox_targets[4][ind_3].numel(),
+                 bbox_targets[4][ind_neg].numel()), logger = logger)
+        '''
         bbox_results.update(
             loss_bbox=loss_bbox,
             rois=rois,
@@ -619,14 +627,14 @@ class R3RoIHead(CascadeRoIHead):
         if self.with_mask:
             #Uncomment this section only for testing the correctness
             #of the dis feature. Keep it commented during train
-            if self.bbox_head[-1].with_dis:
-                results = list(
-                    zip(ms_bbox_result['ensemble'], ms_segm_result['ensemble'], ms_dis_result['ensemble']))
-            else:
-                results = list(
-                    zip(ms_bbox_result['ensemble'], ms_segm_result['ensemble']))
-            #results = list(
+            #if self.bbox_head[-1].with_dis:
+            #    results = list(
+            #        zip(ms_bbox_result['ensemble'], ms_segm_result['ensemble'], ms_dis_result['ensemble']))
+            #else:
+            #    results = list(
             #        zip(ms_bbox_result['ensemble'], ms_segm_result['ensemble']))
+            results = list(
+                    zip(ms_bbox_result['ensemble'], ms_segm_result['ensemble']))
         else:
             results = ms_bbox_result['ensemble']
             

@@ -51,7 +51,7 @@ model = dict(
                     type='CrossEntropyLoss', use_mask=True, loss_weight=1.0))
         ]))
 
-optimizer = dict (type = 'SGD', lr = 0.0025, momentum = 0.9, weight_decay = 0.0001)
+optimizer = dict (type = 'SGD', lr = 0.0025/2, momentum = 0.9, weight_decay = 0.0001)
 
 data = dict(
     samples_per_gpu=1,

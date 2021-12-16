@@ -106,7 +106,10 @@ class ConvFCBBoxHead(BBoxHead):
                            self.num_classes)
             self.fc_reg = nn.Linear(self.reg_last_dim, out_dim_reg)
         if self.with_dis:
-            self.fc_dis = nn.Linear(self.cls_last_dim, 1)
+            if self.dis_selector == 0 or self.dis_selector == 1: 
+                self.fc_dis = nn.Linear(self.cls_last_dim, 1)
+            elif self.dis_selector == 2:
+                self.fc_dis = nn.Linear(self.cls_last_dim, 4)
 
     def _add_conv_fc_branch(self,
                             num_branch_convs,
@@ -237,6 +240,16 @@ class Shared2FCBBoxHead(ConvFCBBoxHead):
 class Shared2FCBBoxHeadLeaves(ConvFCBBoxHead):
 
     def __init__(self, fc_out_channels=1024, *args, **kwargs):
+        loss_dis = kwargs['loss_dis']
+        self.reference_labels = kwargs['reference_labels']
+        self.classes = kwargs['classes']
+        self.dis_selector = kwargs['dis_selector']
+        assert self.dis_selector in (0, 1, 2)
+        kwargs.pop('loss_dis')
+        kwargs.pop('reference_labels')
+        kwargs.pop('classes')
+        kwargs.pop('dis_selector')
+        
         super(Shared2FCBBoxHeadLeaves, self).__init__(
             num_shared_convs=0,
             num_shared_fcs=2,
@@ -251,15 +264,18 @@ class Shared2FCBBoxHeadLeaves(ConvFCBBoxHead):
             *args,
             **kwargs)
         
-        loss_dis=dict(type='FocalLoss',
-                      use_sigmoid=True,
-                      gamma=2.0,
-                      alpha=0.96,
-                      loss_weight=1.0)    
-        #loss_dis=dict(type='CrossEntropyLoss',
-        #             use_sigmoid=True,
-        #             loss_weight=1.0)
+        if self.dis_selector == 0 or self.dis_selector == 1:
+            assert loss_dis['use_sigmoid'], "used invalid loss_dis"
+        elif self.dis_selector == 2:
+            assert not loss_dis['use_sigmoid'], "used invalid loss_dis"
         self.loss_dis = build_loss(loss_dis)
+        #DEBUG
+        #loss_dis_py =dict(type='py_FocalLoss',
+        #                  alpha=torch.tensor(self.dis_weights, device=torch.device('cpu')),
+        #                  gamma = 2.0,
+        #                  reduction = 'mean')
+        #self.loss_dis_py = build_loss(loss_dis_py)
+ 
             
     #Override
     def get_targets(self,
@@ -337,16 +353,40 @@ class Shared2FCBBoxHeadLeaves(ConvFCBBoxHead):
             ref_grap_dis_list =[]
             ref_leav_dis_list =[]
             for j, bbox in enumerate(gt_bboxes[i]):
-                if gt_labels[i][j] == reference_labels['grappolo_vite']:
-                    ref_grap_list.append(bbox)
-                elif gt_labels[i][j] == reference_labels['foglia_vite']:
-                    ref_leav_list.append(bbox)
-                elif 'grappolo' in classes[gt_labels[i][j]]:
-                    ref_grap_dis_list.append(bbox)
-                elif 'foglia' in classes[gt_labels[i][j]] or classes[gt_labels[i][j]] == 'malattia_esca'\
-                    or classes[gt_labels[i][j]] == 'virosi_pinot_grigio':
-                        ref_leav_dis_list.append(bbox)
             
+                if self.dis_selector == 0:
+                    if 'grappolo' in classes[gt_labels[i][j]] and gt_labels[i][j] != reference_labels['grappolo_vite']:
+                        ref_grap_dis_list.append(bbox)
+                        
+                    elif (('foglia' in classes[gt_labels[i][j]] or classes[gt_labels[i][j]] == 'malattia_esca'\
+                        or classes[gt_labels[i][j]] == 'virosi_pinot_grigio')
+                        and gt_labels[i][j] != reference_labels['foglia_vite']):
+                            ref_leav_dis_list.append(bbox)
+                            
+                elif self.dis_selector == 1:
+                    if gt_labels[i][j] == reference_labels['grappolo_vite']:
+                        ref_grap_list.append(bbox)
+                    elif gt_labels[i][j] == reference_labels['foglia_vite']:
+                        ref_leav_list.append(bbox)
+                
+                elif self.dis_selector == 2:
+                    if gt_labels[i][j] == reference_labels['grappolo_vite']:
+                        ref_grap_list.append(bbox)
+                    elif gt_labels[i][j] == reference_labels['foglia_vite']:
+                        ref_leav_list.append(bbox)
+                    elif 'grappolo' in classes[gt_labels[i][j]]:
+                        ref_grap_dis_list.append(bbox)
+                    elif 'foglia' in classes[gt_labels[i][j]] or classes[gt_labels[i][j]] == 'malattia_esca'\
+                        or classes[gt_labels[i][j]] == 'virosi_pinot_grigio':
+                            ref_leav_dis_list.append(bbox)
+                '''
+                if 'grappolo' in classes[gt_labels[i][j]] and gt_labels[i][j] != reference_labels['grappolo_vite']:
+                    ref_grap_dis_list.append(bbox)
+                elif (('foglia' in classes[gt_labels[i][j]] or classes[gt_labels[i][j]] == 'malattia_esca'\
+                    or classes[gt_labels[i][j]] == 'virosi_pinot_grigio')
+                    and gt_labels[i][j] != reference_labels['foglia_vite']):
+                        ref_leav_dis_list.append(bbox)
+                '''           
             if len(ref_grap_list) > 0:
                 ref_grap_tensor = torch.cat(ref_grap_list)
                 ref_grap_tensor = torch.reshape(ref_grap_tensor, (len(ref_grap_list), 4))
@@ -362,7 +402,7 @@ class Shared2FCBBoxHeadLeaves(ConvFCBBoxHead):
             if len(ref_leav_dis_list) > 0:
                 ref_leav_dis_tensor = torch.cat(ref_leav_dis_list)
                 ref_leav_dis_tensor = torch.reshape(ref_leav_dis_tensor, (len(ref_leav_dis_list), 4))
-            
+
             num_pos = res.pos_bboxes.size(0)
             num_neg = res.neg_bboxes.size(0)
             num_samples = num_pos + num_neg
@@ -373,53 +413,91 @@ class Shared2FCBBoxHeadLeaves(ConvFCBBoxHead):
                 bbox = bbox.unsqueeze(0)
                 
                 if res.pos_gt_labels[j] == reference_labels['grappolo_vite']:
-                    if len(ref_grap_dis_list) > 0:
-                        overlaps = iou_calculator(ref_grap_dis_tensor, bbox, mode='iof')
-                        overlaps = overlaps < isolation_thr
-                        if overlaps.all():
+                    if self.dis_selector == 0:
+                       dis_list.append(-1)    #the grape is not considered
+                    
+                    elif self.dis_selector == 1 or self.dis_selector == 2:
+                        if len(ref_grap_dis_list) > 0:
+                            overlaps = iou_calculator(ref_grap_dis_tensor, bbox, mode='iof')
+                            overlaps = overlaps < isolation_thr
+                            if overlaps.all():
+                                dis_list.append(0)    #the grape is healthy
+                            else:
+                                dis_list.append(1)    #the grape is affected by a disease
+                        else:
                             dis_list.append(0)    #the grape is healthy
-                        else:
-                            dis_list.append(1)    #the grape is affected by a disease
-                    else:
-                        dis_list.append(0)    #the grape is healthy
-                        
+                            
                 elif res.pos_gt_labels[j] == reference_labels['foglia_vite']:
-                    if len(ref_leav_dis_list) > 0:
-                        overlaps = iou_calculator(ref_leav_dis_tensor, bbox, mode='iof')
-                        overlaps = overlaps < isolation_thr
-                        if overlaps.all():
+                    if self.dis_selector == 0:
+                        dis_list.append(-1)    #the leaf is not considered
+                    
+                    elif self.dis_selector == 1 or self.dis_selector == 2:
+                        if len(ref_leav_dis_list) > 0:
+                            overlaps = iou_calculator(ref_leav_dis_tensor, bbox, mode='iof')
+                            overlaps = overlaps < isolation_thr
+                            if overlaps.all():
+                                dis_list.append(0)    #the leaf is healthy
+                            else:
+                                dis_list.append(1)    #the leaf is affected by a disease
+                        else:
                             dis_list.append(0)    #the leaf is healthy
-                        else:
-                            dis_list.append(1)    #the leaf is affected by a disease
-                    else:
-                        dis_list.append(0)    #the leaf is healthy
-                        
+                    
                 elif 'grappolo' in classes[res.pos_gt_labels[j]] and res.pos_gt_labels[j] != reference_labels['grappolo_vite']:
-                    if len(ref_grap_list) > 0:
-                        overlaps = iou_calculator(bbox, ref_grap_tensor, mode='iof')
-                        overlaps = overlaps < isolation_thr
-                        if overlaps.all():
-                            dis_list.append(0)    #the disease is isolated
+                    if self.dis_selector == 1:
+                        dis_list.append(-1)    #the disease is not considered
+                    
+                    elif self.dis_selector == 0:
+                        if len(ref_grap_list) > 0:
+                            overlaps = iou_calculator(bbox, ref_grap_tensor, mode='iof')
+                            overlaps = overlaps < isolation_thr
+                            if overlaps.all():
+                                dis_list.append(0)    #the disease is isolated
+                            else:
+                                dis_list.append(1)    #the disease is inside a leaf or grape
                         else:
-                            dis_list.append(1)    #the disease is inside a leaf or grape
-                    else:
-                        dis_list.append(0)    #the disease is isolated
-
+                            dis_list.append(0)    #the disease is isolated
+                    
+                    elif self.dis_selector == 2:
+                        if len(ref_grap_list) > 0:
+                            overlaps = iou_calculator(bbox, ref_grap_tensor, mode='iof')
+                            overlaps = overlaps < isolation_thr
+                            if overlaps.all():
+                                dis_list.append(2)    #the disease is isolated
+                            else:
+                                dis_list.append(3)    #the disease is inside a leaf or grape
+                        else:
+                            dis_list.append(2)    #the disease is isolated
+                
                 elif (('foglia' in classes[res.pos_gt_labels[j]] or classes[res.pos_gt_labels[j]] == 'malattia_esca'
                     or classes[res.pos_gt_labels[j]] == 'virosi_pinot_grigio')
                     and res.pos_gt_labels[j] != reference_labels['foglia_vite']):
-                    if len(ref_leav_list) > 0:
-                        overlaps = iou_calculator(bbox, ref_leav_tensor, mode='iof')
-                        overlaps = overlaps < isolation_thr
-                        if overlaps.all():
-                            dis_list.append(0)    #the disease is isolated
-                        else:
-                            dis_list.append(1)    #the disease is inside a leaf or grape
-                    else:
-                        dis_list.append(0)    #the disease is isolated
-                
+                        if self.dis_selector == 1:
+                            dis_list.append(-1)    #the disease is not considered
+                    
+                        elif self.dis_selector == 0:
+                            if len(ref_leav_list) > 0:
+                                overlaps = iou_calculator(bbox, ref_leav_tensor, mode='iof')
+                                overlaps = overlaps < isolation_thr
+                                if overlaps.all():
+                                    dis_list.append(0)    #the disease is isolated
+                                else:
+                                    dis_list.append(1)    #the disease is inside a leaf or grape
+                            else:
+                                dis_list.append(0)    #the disease is isolated
+                        
+                        elif self.dis_selector == 2:
+                            if len(ref_leav_list) > 0:
+                                overlaps = iou_calculator(bbox, ref_leav_tensor, mode='iof')
+                                overlaps = overlaps < isolation_thr
+                                if overlaps.all():
+                                    dis_list.append(2)    #the disease is isolated
+                                else:
+                                    dis_list.append(3)    #the disease is inside a leaf or grape
+                            else:
+                                dis_list.append(2)    #the disease is isolated
+                    
                 elif res.pos_gt_labels[j] == reference_labels['oidio_tralci']:
-                    dis_list.append(-1)    #the disease is not considered for now
+                    dis_list.append(-1)    #the disease is not considered
             
             dis_tensor[:num_pos] = torch.tensor(dis_list)
             dis_targets.append(dis_tensor)         
@@ -430,13 +508,7 @@ class Shared2FCBBoxHeadLeaves(ConvFCBBoxHead):
             bbox_targets = torch.cat(bbox_targets, 0)
             bbox_weights = torch.cat(bbox_weights, 0)
             dis_targets = torch.cat(dis_targets, 0)
-        #ind_0 = dis_targets == 0
-        #ind_1 = dis_targets == 1
-        #ind_neg_1 = dis_targets == -1
-        #import logging
-        #from mmcv.utils import print_log
-        #logger = logging.getLogger(__name__)
-        #print_log("DIS_LABEL_COUNT: num_0= {},num_1= {},num_-1= {}".format(dis_targets[ind_0].numel(), dis_targets[ind_1].numel(), dis_targets[ind_neg_1].numel()), logger = logger)
+            
         #del dis_tensor
         #torch.cuda.empty_cache()
         return labels, label_weights, bbox_targets, bbox_weights, dis_targets
@@ -499,11 +571,21 @@ class Shared2FCBBoxHeadLeaves(ConvFCBBoxHead):
                 pos_dis_pred = dis_pred[pos_inds.type(torch.bool)]
                 pos_dis_targets = dis_targets[pos_inds.type(torch.bool)]
                 avg_factor = dis_pred.size(0)
+                
                 losses['loss_dis'] = self.loss_dis(
                     pos_dis_pred,
                     pos_dis_targets,
-                    avg_factor = avg_factor,
+                    avg_factor=avg_factor,
                     reduction_override=reduction_override)
+                    
+                #DEBUG
+                #loss_py = self.loss_dis_py(pos_dis_pred,
+                #                           pos_dis_targets)
+                
+                #from mmcv.utils import print_log
+                #import logging
+                #logger = logging.getLogger(__name__)
+                #print_log("loss_dis:{:0.4f},    loss_dis_py:{:0.4f}".format(losses['loss_dis'], loss_py), logger = logger)
         
         return losses
         
@@ -539,7 +621,10 @@ class Shared2FCBBoxHeadLeaves(ConvFCBBoxHead):
                 bboxes = (bboxes.view(bboxes.size(0), -1, 4) /
                           scale_factor).view(bboxes.size()[0], -1)
         if dis_pred is not None:
-            diseases = F.sigmoid(dis_pred)
+            if self.dis_selector == 0 or self.dis_selector == 1:
+                diseases = F.sigmoid(dis_pred)
+            elif self.dis_selector == 2:
+                diseases = F.softmax(dis_pred, dim=1)
         
         if cfg is None:
             return bboxes, scores, diseases
@@ -549,8 +634,13 @@ class Shared2FCBBoxHeadLeaves(ConvFCBBoxHead):
                                                     cfg.max_per_img,
                                                     return_inds=True)
 
-            diseases = diseases.expand(bboxes.size(0), scores.size(1) - 1)
-            diseases = diseases.reshape(-1)
+            if self.dis_selector == 0 or self.dis_selector == 1:
+                diseases = diseases.expand(bboxes.size(0), scores.size(1) - 1)
+                diseases = diseases.reshape(-1)
+            elif self.dis_selector == 2:
+                diseases = diseases[:, None].expand(bboxes.size(0), scores.size(1) - 1, 4) 
+                diseases = diseases.reshape(-1, 4)
+            
             det_dis = diseases[inds]
             return det_bboxes, det_labels, det_dis
 
