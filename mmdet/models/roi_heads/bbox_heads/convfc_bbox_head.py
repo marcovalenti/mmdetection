@@ -47,6 +47,7 @@ class ConvFCBBoxHead(BBoxHead):
         self.with_dis = with_dis
         self.num_dis_convs = num_dis_convs
         self.num_dis_fcs = num_dis_fcs
+        
         assert (num_shared_convs + num_shared_fcs + num_cls_convs +
                 num_cls_fcs + num_reg_convs + num_reg_fcs > 0)
         if num_cls_convs > 0 or num_reg_convs > 0:
@@ -496,8 +497,8 @@ class Shared2FCBBoxHeadLeaves(ConvFCBBoxHead):
                             else:
                                 dis_list.append(2)    #the disease is isolated
                     
-                elif res.pos_gt_labels[j] == reference_labels['oidio_tralci']:
-                    dis_list.append(-1)    #the disease is not considered
+                #elif res.pos_gt_labels[j] == reference_labels['oidio_tralci']:
+                #    dis_list.append(-1)    #the disease is not considered
             
             dis_tensor[:num_pos] = torch.tensor(dis_list)
             dis_targets.append(dis_tensor)         
