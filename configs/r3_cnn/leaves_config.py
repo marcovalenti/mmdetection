@@ -21,7 +21,8 @@ model = dict(
                 in_channels=256,
                 fc_out_channels=1024,
                 roi_feat_size=7,
-                num_classes=16,
+                #num_classes=16,
+                num_classes=10,
                 bbox_coder=dict(
                     type='DeltaXYWHBBoxCoder',
                     target_means=[0.0, 0.0, 0.0, 0.0],
@@ -46,14 +47,23 @@ model = dict(
                 num_convs=4,
                 in_channels=256,
                 conv_out_channels=256,
-                num_classes=16,
+                #num_classes=16,
+                num_classes=10,
                 loss_mask=dict(
                     type='CrossEntropyLoss', use_mask=True, loss_weight=1.0))
         ]))
 
-optimizer = dict (type = 'SGD', lr = 0.0025/2, momentum = 0.9, weight_decay = 0.0001)
+optimizer = dict (type = 'SGD', lr = 0.0025 / 2, momentum = 0.9, weight_decay = 0.0001)
+
+valid_classes = ('black_rot_foglia', 'black_rot_grappolo' ,
+		 'botrite_foglia', 'botrite_grappolo',
+		 'foglia_vite', 'grappolo_vite', 'oidio_foglia',
+		 'oidio_grappolo', 'peronospora_foglia', 'peronospora_grappolo')
 
 data = dict(
     samples_per_gpu=1,
-    workers_per_gpu=1)
+    workers_per_gpu=1,
+    train=dict(classes=valid_classes),
+    val=dict(classes=valid_classes),
+    test=dict(classes=valid_classes))
 
