@@ -118,7 +118,6 @@ class BBoxHead(nn.Module):
         num_pos = pos_bboxes.size(0)
         num_neg = neg_bboxes.size(0)
         num_samples = num_pos + num_neg
-
         # original implementation uses new_zeros since BG are set to be 0
         # now use empty & fill because BG cat_id = num_classes,
         # FG cat_id = [0, num_classes-1]
